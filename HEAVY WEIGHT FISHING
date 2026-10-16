@@ -1,0 +1,2335 @@
+--=====================================================================
+--  HoangWER FISHING  |  Theme: CYAN TEAL  |  Giao diện: Tiếng Việt
+--  Tính năng mới: tự động dùng tất cả kỹ năng Z / X / C / V khi câu cá
+--=====================================================================
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+if getgenv and getgenv().IdenticalHeavyweightFishingUnload then
+    pcall(getgenv().IdenticalHeavyweightFishingUnload)
+end
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local Lighting = game:GetService("Lighting")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+local isRunning = true
+local activeConnections = {}
+local cleanUpInstances = {}
+
+local Events = ReplicatedStorage:WaitForChild("Events", 10)
+
+local Config = {
+    AutoCast = false,
+    CastDelay = 1.0,
+    CastPower = 100,
+    AnchorBar = true,
+    AutoSlam = true,
+    AutoCharge = true,
+    InstantCatch = true,
+    AutoSkills = false,
+    AutoAllSkills = false,
+    SkillZ = true,
+    SkillX = true,
+    SkillC = true,
+    SkillV = true,
+    SkillDelay = 0.15,
+    SelectedSkill = "One-Strike Heaven Gate",
+    
+    AutoEquipBestBait = false,
+    AutoEquipBestRod = false,
+    AutoEquipBestOrb = false,
+    Loadout1_Rod = "Wooden Rod",
+    Loadout1_Bait = "Basic Bait",
+    Loadout2_Rod = "Wooden Rod",
+    Loadout2_Bait = "Basic Bait",
+    
+    AutoSell = false,
+    SellInterval = 30,
+    AutoFavouriteFish = false,
+    FavouriteFishName = "Colossal Tigerfish",
+    MaterialFarming = false,
+    
+    OctoAutoMinigame = false,
+    AutoFarmBoss = false,
+    AutoFarmSecretBoss = false,
+    SelectedBoss = "Enzo",
+    
+    AutoGodSpiritCheck = false,
+    AutoPrayGodSpirit = false,
+    AutoServerHopGod = false,
+    AutoServerHopMaoshan = false,
+    AutoServerHopTaoist = false,
+    
+    AutoTicketQuest = false,
+    TicketDifficulty = "Easy",
+    AutoClaimDaily = false,
+    DailyClaimDelay = 0.5,
+    
+    AutoCraftBait = false,
+    CraftBaitName = "Nameless Bait",
+    CraftAmount = 1,
+    AutoBuyBait = false,
+    BuyBaitName = "Ancestral Bait",
+    BuyBaitAmount = 5,
+    BuyBaitThreshold = 10,
+    BuyBaitDelay = 1.0,
+    
+    AutoGacha = false,
+    GachaBanner = "Taiji Banner",
+    GachaPullsPerAction = 1,
+    
+    WalkSpeedEnabled = false,
+    WalkSpeedValue = 16,
+    FlyEnabled = false,
+    FlySpeed = 50,
+    InfiniteJump = false,
+    WalkOnWater = false,
+    Noclip = false,
+    
+    ESP_GodSpirit = false,
+    ESP_SecretRod = false,
+    ESP_Boats = false,
+    ESP_Maoshan = false,
+    ESP_Taoist = false,
+    ESP_Boss = false,
+    ESP_Players = false,
+    FishRedRing = true,
+    NoFog = false,
+    Fullbright = false,
+    PerformanceMode = false,
+    HideGameUI = false,
+    
+    AntiAFK = true,
+    AutoRejoin = false,
+    AutoExecuteOnJoin = false,
+    UIKeybind = Enum.KeyCode.RightControl,
+    StopKeybind = Enum.KeyCode.End,
+    ActiveProfile = "default",
+    AutoLoadProfile = true
+}
+
+local PROFILE_DIR = "Identical/HeavyweightFishing"
+
+local function EnsureProfileDir()
+    if makefolder then
+        pcall(function()
+            if not isfolder("Identical") then makefolder("Identical") end
+            if not isfolder(PROFILE_DIR) then makefolder(PROFILE_DIR) end
+        end)
+    end
+end
+
+local function SaveProfile(name)
+    EnsureProfileDir()
+    local path = PROFILE_DIR .. "/" .. (name or Config.ActiveProfile) .. ".json"
+    local data = {}
+    for k, v in pairs(Config) do
+        if typeof(v) == "EnumItem" then
+            data[k] = {__enum = tostring(v)}
+        else
+            data[k] = v
+        end
+    end
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(data) end)
+    if ok and writefile then
+        pcall(function() writefile(path, encoded) end)
+        return true
+    end
+    return false
+end
+
+local function LoadProfile(name)
+    local path = PROFILE_DIR .. "/" .. (name or Config.ActiveProfile) .. ".json"
+    if readfile then
+        local ok, content = pcall(function() return readfile(path) end)
+        if ok and content and #content > 0 then
+            local decOk, decoded = pcall(function() return HttpService:JSONDecode(content) end)
+            if decOk and type(decoded) == "table" then
+                for k, v in pairs(decoded) do
+                    if type(v) == "table" and v.__enum then
+                        local enumType, enumName = v.__enum:match("Enum%.(%w+)%.(%w+)")
+                        if enumType and enumName and Enum[enumType] and Enum[enumType][enumName] then
+                            Config[k] = Enum[enumType][enumName]
+                        end
+                    elseif Config[k] ~= nil then
+                        Config[k] = v
+                    end
+                end
+                return true
+            end
+        end
+    end
+    return false
+end
+
+if Config.AutoLoadProfile then pcall(LoadProfile, "default") end
+
+-- ===================== TỰ ĐỘNG KỸ NĂNG CÂU CÁ (Z / X / C / V) =====================
+local SKILL_KEYS = {"Z", "X", "C", "V"}
+
+local function FireSkillKey(key)
+    if not isRunning then return end
+    if Events then
+        if Events:FindFirstChild("UseSkill") then
+            pcall(function() Events.UseSkill:FireServer(key) end)
+        end
+        if Events:FindFirstChild("TriggerMinigameSkill") then
+            pcall(function() Events.TriggerMinigameSkill:FireServer(key) end)
+        end
+        if Events:FindFirstChild("Skill") then
+            pcall(function() Events.Skill:FireServer(key) end)
+        end
+    end
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        if vim then
+            vim:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+            task.wait(0.02)
+            vim:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+        end
+    end)
+end
+
+local function UseAllSkills()
+    if not isRunning then return end
+    for _, k in ipairs(SKILL_KEYS) do
+        if Config["Skill" .. k] then
+            FireSkillKey(k)
+        end
+    end
+end
+
+local Colors = {
+    Background       = Color3.fromRGB(8, 20, 24),
+    SidebarBg        = Color3.fromRGB(5, 15, 19),
+    BorderCyan     = Color3.fromRGB(0, 188, 212),
+    BorderSubtle     = Color3.fromRGB(24, 58, 66),
+    Divider          = Color3.fromRGB(18, 46, 54),
+
+    CyanPrimary    = Color3.fromRGB(128, 236, 245),
+    CyanAccent     = Color3.fromRGB(0, 188, 212),
+    CyanMuted      = Color3.fromRGB(92, 170, 184),
+    CyanDark       = Color3.fromRGB(16, 74, 86),
+    CyanGlow       = Color3.fromRGB(0, 229, 255),
+
+    RowNormal        = Color3.fromRGB(10, 26, 32),
+    RowHover         = Color3.fromRGB(16, 42, 50),
+    ControlBg        = Color3.fromRGB(14, 38, 46),
+    InputBg          = Color3.fromRGB(8, 22, 28),
+
+    TextWhite        = Color3.fromRGB(235, 252, 255),
+    TextSubtle       = Color3.fromRGB(150, 200, 210),
+    TextMuted        = Color3.fromRGB(96, 140, 152),
+
+    AccentGreen      = Color3.fromRGB(56, 220, 180),
+    AccentRed        = Color3.fromRGB(248, 113, 113),
+    AccentOrange     = Color3.fromRGB(251, 146, 60),
+    AccentYellow     = Color3.fromRGB(250, 204, 21),
+    AccentBlue       = Color3.fromRGB(34, 211, 238),
+    DropdownSelected = Color3.fromRGB(14, 62, 72)
+}
+
+-- =====================================================================
+--  LOGO CUA BAN (thay cho bieu tuong mat trang cu)
+--  * Cach 1: dan asset id logo cua ban vao LOGO_ASSET_ID, vi du:
+--              local LOGO_ASSET_ID = "rbxassetid://1234567890"
+--  * Cach 2: de LOGO_ASSET_ID = "" -> script tu tao file anh tu du lieu
+--            nhung san ben duoi (can executor co getcustomasset/writefile)
+-- =====================================================================
+local LOGO_ASSET_ID = ""
+local LOGO_FILE = "HoangWER_Fishing_Logo.png"
+local LOGO_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAHAAAABwCAYAAADG4PRLAABg8UlEQVR42u29d5RdV333/dn7tNvL9CZppFFvlqzi3nDBGFOCwSEBAiShruQhTwjJk/ASJwRIQnkoAYIpocTBxgYb3Kvcq2xZktW7NBpNn7lz57ZT"
+    .. "9t7vH/eOLBsZbGMS1rves5aWZs3MvXPu/p5f+/6a4HfzEoBs/K8Ac+IPM5lMkzFmoRCiVwixCpgLzAOMMWaxECLdeI1ovMQAwhgzLYTY1fj+AeCgMWazMeaQEGJPsVicOMl9WI3X6xffx+/KQf0uXbLxLzrxm/l8"
+    .. "fpYx5nXASmPMGcB8oFWI52/fGIMQAmN+9Rmf+JoTXwuMAvuEEI8DW4UQGyYnJ/tf9Kt2A0j9/wP4y9JmTjgYmU6nT5dSXgJcAqwSQsRP8lothDANUETjf3myPzIDrDFGG2MwzyM98/d50QNRBTYDd2ut756enn7i"
+    .. "xPtrvO5/XCrF7wBwauYbqVRqsWVZlwPvAVaeeKBCCNUASyilpFJKKKVQShFFEVrrXyl9Qggsy8KyLGzbxrIshJBIKWYk1zTAnVG91szfb7zvVuA/lVK3lkqlXSe8tfU/CeT/FIDWCcBZmUzmdUKIPwNeL4TwGgdu"
+    .. "hBAKEEEQyDAMhe/7AMTjcVKpFOl0mvb2dtra2mhqaiKTyRCLxRrg1NVpFEVUq1WmpqYYHx9neHiYsdFRisVpgjAgCHyU0ti2jed52LZdF22tjTFmBhhrRryNMT5wlzHm68ViccOJn+PEh/H/qwDOqDcNuNls9t3A"
+    .. "x4QQK2ekRAgRaa1lrVaTvu8jhKCtrY3e3l5WrVrF0qVLmT9/Pn19fbS0tJBIJIjFYi/7BiqVMtVqjXvv3cD3f/Aj4vE4nmtx4MA+9u8/wOTkJEIIPM8jFoshhJiR7hnbZ58gmVuBr05NTV0DBC/6fP+fAvAF6jKT"
+    .. "yfyBEOLvhBDLZ6QN0NVqVdZqNRGPx1m0aBFnnnkm5557Lqeeeipz5849Lh0ns28z/072s8aDgRASY0BK2Ld/Lx/96F9yycVvom/xXE5bt4qJkRE2bnyKBx58gCefepID+w8QRRHxePz4Q6KUmrHV8gSp3GaM+Vyx"
+    .. "WLz2v1utiv9OddlwTD4thLi4/tmFMkaLcrkswbB48RJe//rXc/nll7N27VqSyeQLPRat0VqfAIh4Sc/y5EDX30NKwcFD+7j00rdwyorTec8HPsL45DBvvuRsmptyAIyPj/Pkk09y8803c++993Lw4EGklKRSKaSU"
+    .. "KKVmJM0IIawGkPdorf++4fD8j6nV1/LhsBphQDabzX4tm80G+XzeNDc3q1QqpSzLMslk0lxyyevNTTfdZCYLk+bESylloigySinTsEm/8TXzPocOHzJLly83TU3t5rpfPGrufeqgufpHPzV7Dh35pdcMDQ2Z73//"
+    .. "++b1r3+9SSaTRghhstmsaWpqMtls1mSzWZXNZlUulzPZbDbIZrNfy+fz2RNAFL9N6fht2ToDmEwm83rgRiHEZbZtW2EYqkKhYLW2top3vONKmppb+eiH/5y3vPVyYjGPSCmMASFASomU8gXSdqJafDWXMRohJBMT"
+    .. "BW644QYOHdyPl8ly3oWX4aWa2PzsNpoyHvlckiiq30s6nWbVqlW8+93v5uxzziaKInbv3s3U1BSe52FZljDGzJAOthDiNGPM2zzP2+v7/t4XncnvPID2zAfJ5XJfAr5uWVazMSYqFAoyk8nID3/4Q3zrW99i+Slr"
+    .. "GJ+uEkumWNTbi+M6GAESgZTyV9o7cZxgMXWa5YQgfubrkwft9Z9PTIxz3bXXMTo6wmSxRCLbwqIVy8i35Nn01Faash5NTU0I6u+lVYBA0tvby+/93u9x8cUX4/s+27dvp1QqEY/HEULIxj1EQohWIcS7Y7FYrlar"
+    .. "3TdzJq+1g2P9NuxdOp1eEI/Hfy6lvFJKqaenpw1gvec97+Hb3/k2737Xu8nn8/zbv30dP9Qkklnmzekhk02hjUYIgxDy17IpRtc9khnAXgzayQDU2iCl4NDhw1zzXz9mcrKAMhaH+o+RSHtccNF5SBnn6Weeoa25"
+    .. "iWw2jTEKSzjHJdgY6O7u5q1vfSvnn38+w8PDbN++HWMMnuehtZYn2MczPM+70HXdh4MgGDuBmvudu6yGh3llNpsdb25uNplMJgTMWWedZe67997jNiUMQ+PXfHPOOeeY1138ZvOzWx82T258zhhjTKR8Y0w4E1O/"
+    .. "yIDVbZhSyoRhWP99bUyk1HF7OWPnXspmKqWMMcbcdtvtJpttNsJOmObO+aZ5zlLTu+5sc/+uQ+ZAzZg7Nx4w37/mZtM/1G+MCY0KtdE6On5fqvE3Z65rr73WLFmyxAAml8uZfD4/Yx/Dhm0cz2QyV77WgiNfQ2dF"
+    .. "ZTKZD0kpf2LbdlOxWFSWZdmf+cxnuPfee3ndhRcSKU0Qhti2zZEjRxgaGuHAgUNUayH7+o8QaY2FpK4gT6L+Gg+ulJKHHnmMO+/ZgNIaS8pf4kJPqj4Bbeoa7MD+/UxNTRJLpsFykNJw9MBh7r3jLmwPuvvm0jJ3"
+    .. "Prff9yhjhTLSFjwf1z9vn2cYoHe+8508/PDDfPSjH6VWq1Gr1WbCHtsYo4AmKeVPMpnMhxrq9DVxbuRrAJ4EVDab/ZZlWd8SQqiJiQm9Zs0a64477uCTn/wksVgMpRS2JbAat7zp2WcZGBrh6MAxnn56I9Jz2X/w"
+    .. "EEgbrcVLqE4wWs1kJPjFL27mvg0PMD4+dpx90Vq/gPv8pfdo2NahoRFA48ZiaMvGILGNx9233c3Y8BBWzDBn2RJybQu56ea7qVQrSGlhXnTmM06WUorm5ma+8Y1vcN1119HT00OhUJgB0QK0MUZJKb+VzWa/1QBR"
+    .. "/qYgWq8FeJlM5tuO43wwiiI1XZy2PvyhD4lrrrmGuXPnopRCiLpT0qCTEULys5/dxIYHHiGTzTMyNMySxUtAG+bNmY14kR00pi45UsgZFGlrbWX/kSPcce8DHBuaxJYWPV3tSMtCaYUQkgbH/QIPRgpJ4Ptce911"
+    .. "bN66nXS2GSMk2ihi8QSFqRJz5vUyb+FcgiCks2sWIyMTHD64n8Xz5x4H8AU8qTFIy6o7O1qzZMkS3va2t7Fr9x62bNlMIpF4wXkJIda5rtvt+/7Nv6k6tV4L8FzX/UClUglt27a//vV/41Of+ntc10UpdVwyZoCQ"
+    .. "UhL4NX7wo2vYvucA2aYWjh45TBhE9MyaRT6XoaU5ByYCIcGAUgbLktx5110ANDe3YFkW1ZrPV7/xLbbuO8LOfXsZHhmiq6udpmwOozUaVQfdgD5BtQ4ODfKFL36ByakyyVQTRgiMMCAFkRHEExkWLJhHaXqKTK6J"
+    .. "1vZuBvr78UtTzOrpRqHqD4cRGG2oP1fi+IOqlCKbzXLl718JCDZsuA/LrhPpxhgJhFLK1wRE6ze0ed92XfcDU1NTUUtLi3PddddyxRVvR6mwwfS/UEPrhgQcPnyEz/3LFwiMJJZIgtEcOXyYZCJGPO4yb94cXNcD"
+    .. "IyiVS2zdupV8U55bb72NSqlCe3s7Dz74IGesP4NHHn6ELbt3UQ4iNj77HI8++jjpRIoF8/qwbRujNeYEaRZCsG3bdr72b98glswinRjScQCD1pBMZhkZG+Xc889jx/adCBmjubmZTCbH089uIZdM0NrcBDpEII97"
+    .. "wS9Wq1prhBS87oIL6Omeze23346KIhzXxRhjAdGLQLRfjXf6agC0gSibzX7Ldd0PTk5OhkuXLnVu+vmNnHba6URRhGXZLxGD1dXg5s1b+d4Pf0SqqQ0sB60ilAo5sG8/pdI0yVSSRQsWIaQgiCK+893v0tLaThgq"
+    .. "du7aw+w5fdz481u45557WbfqVDY9tZl4LEVoBINDw9xx510c2H+QhQsW0tLSBA3bWFergjvvups77roHL5FB2B6W42C0JlKKeDJNqAyz5/TiOjGeeWYLK05ZjRdPYHtxtm1+lkXze3FdGxAvSSgIITDUsyFr1p7K"
+    .. "mrXrufOuO5kuFvE87wWS6Hle5wkg6t8mgDYQZTKZD7mu+w8TExPR6aef7vzi57+gr28+YRThvAR4ADrSSEty330buO+hR8m1daOxMEohjEBHEYcPH+HosSFymQxz580lEYtx402/YGy8wPjYJL+47Q6El8SJp7j6"
+    .. "u99m/4F9lCs+ruehjMFxHIyQbHp2Gxuf2Uw8kWDOnFnEPBdhBJGO+MLnv8TO3fuwvSSWGyMeTxCFAdrUY1JpexSKRdavP4P/+q9r6e6ZxZw5PSRTOUrFEv1HD7Kwrxe0+rUgSiGIlGLhgvmcf8EF3HnnnYyNjRGP"
+    .. "x9FaW42gf73rukO+7298pSBarxBslUql3u553o8mJiais846y7rppptER0cHkYqwbYt6YsGc1Lmq2wn45r9/iy079tLSPRshbVzbxa/VsIRAA0ePDnJsYACA+QsW8Nz2nfz0pzcyPlFk9/5DbN9zgLGpabBt9h04"
+    .. "gEimiadTSKsuaVLYJFNNjIxPsHPPDsqVMvlsjlw+x7FjA3zta9+g7CucWJJYMkUsnsAPaggpiSfS2E6MWs0nm8ly+MgRdu/ew1lnnkUyESOVaWbHzu2k4w5tLa310ELIl3QlhRBYUhJFET3d3Vx40YXccfsdjI2N"
+    .. "zUiiAJSU8s2e5233fX/bKwn2rVcQbphsNjvPdd1bisWit2bNGvHzn/9ctrW1NUIEG3E8fjt53YmQgnK5xJe/8jVGiyH51i5CDdKxUVGNKKzgOA4IycjoOIf6BzjUP8i+Q0fYuHkrgyNjNLV0IWyXWqRxvTipbBNe"
+    .. "LIMXS2LZNspokAajFbZtM1WrMjgxCZbH4sXLuO2W27n+xl+QbmpBeAkSmQzSsgiUxnI84vEEtmMR+D7TUyVsKdm7by+1Wo31p63DijvEEnl2btnCwlntePEYoQbrJWptZmJT2QCxs6OT888/n5tvvpmpqSlc1xWN"
+    .. "kMcIIS7xPO8G3/cnXy53ar0Cj1OkUqnby+Xy/Dlz5uibb77Z6u7uPu5pvizvRwj6j/bzw2uuJRIeyWwTUeP1nm3h16pIy8Jx40jHY6pUYfNz29i5Zy+pbI5EOkMimcZ2PYwQCClxXQ/brtNc9ZIJCcYgGl6nEjA+"
+    .. "PoFfCxGWy7U3/JSxYolsUwvCcfDisXqaShkcxyUWi4OQGCMIw5AgDHBcl71795LJZlm6dCGum2B0dJTC2Ah9c3thJsR5SQLdHPdQoyiiq6uLdevWccMNNxDWiQ1hjNFCiARwuu/733+58aH1clVnPp//v0EQvD2R"
+    .. "SEQ33XSTvXTp0lcEXt3dFjy9cSM/vOZ64tk2vHgKdJ3DtG2rEe+B5XhYXpx0NofjxXHicWwnjhuPI10HpIWhnpw1jfAE08g0WHWCw2iNZVlI20FIm8nJIpu3bmdyukwik8VIG9txEFI03kDguh6O46J1PdxEQBiG"
+    .. "IMCxbbZt3UoylmLxkoVkck3s3buXfNKjKZ9HvyR5Xpe+E6XwJz/5CZdeeikLFy7k+uuvx3GcGSI8EkLMdl034/v+HS9HlVovB7zm5uYLtdbfDMMwuuaaa+wLLrjgFYFHg8KSUnLTTb/gljvvpXXWPBAWUoCU9fex"
+    .. "bAfLdnFcD8uLIW0H23FxvRi24yKkjZAWRoMUVj2mn8nGA7JxP0JY2LaDkBZWA0DLcglDhWXb9Z8Jq3GoFoK6s2FbDkJI6mRO3YuUDVCkEIRBwDPPPE1bawsrVy7BjwSH9u5hyfy5SCmOZ0V+2RvlOLHwpS99iTAM"
+    .. "WbNmDStWrCCVSnHLLbcQj8dnPNNISnmm53mP+L6//9eBKH9dtr65uTkNXF0oFMzf//3fyze96U2NUOGVObAzIB0dGMBxY40n3RyXHqUFWA5OPIntxXA8B2FJDKZBj9WzCBhAGYTSCF0/GMuyGgctEFgILIy0wYkh"
+    .. "pIPreFhCYkuJ0LoeG2qDJeuvE0IgpAVItDFobRBS1qWzYdm11sS8GEoZ/u3LX+LeezawcNl8qsbm0cefqgN1ksq4KIqQQqC14qqrruKuu+7iXe96F67rEoYh//t//2/e8573MDExMUO7zdi+qxtn/ysrJ+SvcVyU"
+    .. "EOKfC4VC35VXXqk/8YlPyFcqec/bAAiCgMliARwLIVws6RwP8I/TzUajMWgFRoEwAoxAS4ExAq1ASINEoQVILRBGIKSDMoYIjTIGZepqFiHqKSopMRKMI7ClhVCNirVaBa00lu1gLEG9kEpjpEEhiBrpI0tIVKTw"
+    .. "Yi5KRXz1Xz7PE/c/xdqzz2H74aMcOXAYy7LQSmO0QukIITSO4zA4OsrH/+b/8MUvfokP/Mmf0tzcjG6oeGMMX/7yl1m7di3T09NIKWXDHvZFUfTPJ3CmrwhACejOzs411Wr1Q7Nnz1Zf/vKX5Qwt9mqz4VEYUi5X"
+    .. "sGy7rqowmIatmaE5kXVJE7L+tZASgYWlbIyxsYSFZUuUpcAvE1SnCMMiEQGO1sRVgGVFQIinNVJFmNDH6BpGhUxPlBnr78cvDFGdHCIKyjSnY+jSFBPHBoh7bl2KAoUVhtgYbNdCWRDIuvTmMlnCIOAzn/4nNj79"
+    .. "DKdfdCH3b3qGo8cGsWwLISWWsJiYLHLjLbfxh3/0J3z9m9/m1DXruOyNl73AqdFak8/n+frXv04sFpup+ZGNDMaHstnsmpkiqldiAyWgXde9tlqtzvuP//gPs3bt2lclfSfagnK5wo+vu4Fjo1NkmluIGqmduvoz"
+    .. "xzMOArAjkEYSYRCOrNsQIixVoTA6ysjQMWrFSQqVSaIowBMxapUq2iiCqEZYmqI8Nc709DQ136dcLmFJi0wuR3x2C6nmLCsWLaItl2e4OEFhZJRzzjyT7oXz2HPgAEnHBgKMjvBrVWqlEibwcYREGUUslaIahDz4"
+    .. "4P2k0xkWLV/Fzt07KE5McPBAP48/+xx7Dw3ztW98lyc3bsJzXd7/3ndx8UUXvoAMn+FOZ82ahWVZ3HrrrSSTSaG1NkII2xizyPf9H7xUWGG9lOPS3d39jrGxsU+8733vU5/4xCes3wQ8GmUMU8Ui11x7I8VKRCKT"
+    .. "Rhtdt0tCNyrOVP3pFwKNgxYS2xLYaKLqNOPDBxkeOQKBJunGaOqdzdxF85mTzTHQf5R0aw5VKTJw+BCUy0QmxMk00da3kLYFS2me10eyowWnUqO3rQMn28SO4QnceIJ1K0/BERaPPPEIJvJRpSKFwgSFqSKhhs7O"
+    .. "TqSAih/gxmNoDZ4bR6uI++97gGoxYvasXkrVECfbQknY3H7nBp57bgeu41GrlPiL//VRFvTNO14V8AJHxxjWrFnDI488wr59+4jFYlJrraSUcz3P2/FSAb44ieMiLr30Uuehhx56rrW1dcGjjz6qu7q65Iwb/Gqu"
+    .. "eimfZN+Bg7z7/X9GoWYQMbt+P0ailF8H0Ghsy8ZxPZQtUdUqplylVJikFvhk83ni7e2ku2eRzTVRm5xgTjpFsTjJkdFhetpaGDl0iIPHRmlb2Ee6q5NUrhMtPYQRlCbHOLp1Ey3NHTTP6sE3VTociwQR2zdtYd/O"
+    .. "PVieh5ISHJd0WxuxfCvZjm7mzJ9HEFTZ/dTjUC0Tt+OgbIzURIQUxwp0dnTSMa8XLxVn9NggB/ftJenFGeo/TEc+wc9/9kOWLlp8/DxOdkaPP/44r7/kkhmPWjfU6d6pqakVQHi8EOgEbvOXHJfNmze/s1arLfib"
+    .. "v/kb1d3d/aqkz8zQacY0MtmS/UeOkmvtpHBsDCkArQiDkCCsgZC4rottSVRQpTwyQrVcxXZSpLtmMae3F7epGWklUEZSVREDA2NU8jWaFi0hFm9my85tzF28inVndBLG6tyoljbagONI8nGXZDaLsSIoThAfGubw"
+    .. "2FEOHD5CqC3iXd00tXWT7eom3tZGrKmZWDpDLYKK1iRybSw6Q7Lr8YcoTUzTnG6lomtYUtPS3kQhrDC4eTNCKxxbksvnCatV/HKRBeuW0t3Z3jBn4iReej0pfMYZZ/D+P/5jvva1r9Hc3CyjKFJCiAW5XO6dhULh"
+    .. "hy+uNf0lCbzqqqusz372s1vXr1+/eMOGDcZxHPmrHJeZDHj9iTIYIzAmwqAx2NgNV3zfwQM89uwO7nlkM3dveJiWfIawNk3Vr6GVxrMkljFMT5cIoohUcyvpzm6aZ8/DTWTxBURRgIgURlrYjosUEE/GCe0YMcci"
+    .. "7rmks1mwXcIoRAUBSivaezpYsGQ+pckpbr/uRip799CUMIwUp6kKh3xHN02ds2jt7SOeSlIKA5QROJEhkY5TKk9RGJtAKLBch3ByhIOPP0ptdJRkJokWIJSFtGTDIZNEkcYgqdamGNqxhSuvfBPfvfrreI6DMTPJ"
+    .. "5hMfd4PWAilg4OgAZ519FuPj4ziOo+tFeGbX1NTUSl7UL2m9yPbpnTt3XlCr1f7yK1/5ilm+fLk8mbi/FIggGu6xjRT1GKs4XebpTc9waHAEbdv8/I470FKgIp9ysQjaoPwylcIIfq1Kur2HnmVraVt0KrHOWYSO"
+    .. "h7RtlF+pPyhuDJlME29pprVvHnYqTSaZorWtDTeRIJnLk2lqRkhF2S/TO6+Xc05fwuyuLEf7ByhPl2idO49iGNA9u5vZp5yD1zEbK5dl3vIlLF+5hGw+h23HqFbKGKPp6mjHklCcKoIJSTV30DlnPpWpMUrjY8Tc"
+    .. "JMaIRskFhFFUj1sN1PwyfnmKRMLjjZddRjqZalQliBdYLtGwhVorcrkclWqNu+6880SHptXzvId83z9woi20XpiHlKZcLn/9ggsuWPiZz3xGG2OkPEnC8mQlfica47179/HIY0/x2NNb2bn3IMr2iNwk3/nBtfQP"
+    .. "DGNLCCfHkH6N6ngBGWlmrV7PisveTPOCZeCliJRBSWhrb0MFITpQaMvFzmSxkynaembR2dVDUAtwLEGEwEnEaWlvpVQpUxofYVFPBxefvpLurMfgeJlikKatvY0Dz23k4pjFaR0ej+07gPCaCCJFe0eehfM7yWbi"
+    .. "JFJp/EhTrpRoyjXR1NKGljZT5TKWbdM+u5fu+QuYGDxGZXwU23UbjJxsFE4ZbGOo+hUMEYPHjjF3wULWrFj2KwqTBULUtVhX7yJuvfnnTE1NYln2TBjR4vv+j0/0SK0Tw4aurq4F1Wr1X7/4xS/aS5YsEVpr8euk"
+    .. "70TmYSa22fj001x3w89I5ZrxYkm279rDt3/4XwwMjeFKm9r4OLXiBIGCOWvW8voPfJhTzrsME29hZKxAsVQg3ZZlyapl9RawMCLd3o2dTCFsCzsWZ9mypfS0tFIcGSaKAqRnM2feHLLZOIXRY3TmU1x0+kraMi4j"
+    .. "1YBDBY10kzx53bfpG97PR88/g750gq0DUwwaB+lKMs0p5s3vwo0LHM8i5bjELUEmmSQei5NubsY4Dvg1kpk0zfPmMqd3Nge2b6ZcnCAWTxBF+rhMSQm1apkwCHDdGFPA5RddTNy16mzPi6RwRjJ9XxNaaY4OTrHx"
+    .. "0buJxxOioeVmua57faO+VAJmBkBLCKGLxeIfn3XWWZd97nOfU0II6+V4nS+2j1ob+vrmsm7Navbv3cc/XvUp7rnrLrK5JmJxh+nREUytSnNHJ+dc8U7e/NG/oqlvOZOFKQ7s2sFUaYI5i+az6uxzQNiMDAwzd/Y8"
+    .. "Yrk8lu0wOjhEIpfm1HWrEFIxXZxAYEimkyxYNA9XRjja58yVC+nNJRivVtlbFBhpMfDQrfQd28Mfn7GcpJE0JZLsmRziibEiiVwzjuOyeP4cUp6Fg6I95ZK2oFqYwPMc0pk0iVSCpJcinoyTbk7SMmsW3W0tbH74"
+    .. "Loyx8LxEg5kAaUmCWhUVRPh+SNiUY0FPD4vnznpBk84Lwi2gFgiODisqpoOnH72Z0C8LISwlhPCEEEd8339sxuTNIKTe/va3u0KI9733ve/Fsiz5vF17+YF6vQtWYknJnDlz+OP3/iFvvexiXBMS1SqUR0epTE+C"
+    .. "9AnL4wR+Cel6jB4d4Wj/YZrndHH2xZew7sxzaGtpZaR/hO7OOaTb20lm8kxPjJA88BBLXB83baOFTyqTIZXL0t2ZpafFIStDls1qZ04+Ra0WsXeoQigdxg/sJXrobq5YPJ+sFcMPS1RVlVNbM3R7Gt9YFCshE4US"
+    .. "NgZHWniuRcZzCUKNqfl0ZSULunK0teXpaGuhI5UkFrM4+62v5/c/+CGmKgWEiLDMTP+1QDouQkXYWjMyXGDD1m34YZ1mM0LPFKs2qtvqJiiIIiampiE+i4WrLyf0y4g6xYYx5n2AO+OJyob0mZtuumltX1/fsre8"
+    .. "5S26YQ9/g4JDiVaKdDrF5z//L6xfu5rBQwcIKj6RLlOcGGHNWRdz6R/8CcVyhYmJfpatns+b3nYhS1YvIt/WzFSpgnIlbZ05vLhDJapS2fk0H1s5n1Pa49iRxiiF5cRIp5N0dTSRtCAbs+lpyWGZiC1HhzlGHBGX"
+    .. "1LY8w/k9Odocj7AcYrJxdEuauW0dSBMwHYaUywEjQ+OAQQmDjwZbEihNqeIjhaIzZ9PXk6AlpWnP2qS8Kr4d8sY/+kPOP+9sJgcGEJYhEnUBsF0PbIltg5oqsuW5HezrH0AIG6XrmQolTkiCC0GkDNWaxvcDFp36"
+    .. "Ntx4BqOVBLSUclk+n1/bsIGWbDQqEkXRJW9605toaWnRM7Wcv1HFr5SEWpPL57nyHW/D1iG+X8JUDH/08U/xR5//AuSbcaXm1PVLWbRqCdKBSFRxEpKpsVFaUjlsN41000SHd/DGzhRt0mWgfw9G15DCQgOJmEM+"
+    .. "FcdF05pNk3VdjhUDtg5NML13B49899uMbnycxe2zkK6N8SyS3e1YHTlSiRjxSgkZacIIhsam8LVACUWARjsWfhgwUS7hhxA3ET0pl46YS1ZCSggqhSKJRIx3fOh9pPIpKtNFhKTeuu24WPEYRkKTJRg6uJ8dhw42"
+    .. "sheqngCd0Z2i4RQaSeAL/GqVtp7ldPauIwwqCCF1w+u/5LjjCagrrrjC8jzvkre97W2vcdNnXTUsWbqMahhgWxZ/+fmvcdlH/5Jnd25GF4+wfmkXueY800XN+MECKTdGGFWYmizR1NyEkIaDTz3Ckz/+Nr+47Sd8"
+    .. "7Op/446f34I/MklCOFgWSMdgWwZhImzLJjCGh7fvoVisseOeW3j8i5/h2J7n+M5D93PXzi1EHXkSrS0o28LJJlnkxkkrDSpkYnqKSV+jjEUtEgRIQg1F3yeIDLZReBhc2yKo1kg5cSYODTI1VWbO8qWc/wdvpVou"
+    .. "YWnQRmEJi3Q6h7Fs/OkisUiz8YFHOHL4MI5tISwBQqOUOu69zlDDRhtsN0HfysvqYD/fEXzJTEBvSSnN9u3bO9auXfsvn/zkJ23btkXjevWwzfQQaIG0JMeGhrn1gUf483/9MqsvPpev/t1fcfi+e3n/778NJ5lk"
+    .. "31iFoBJwYOPjtPY0M1EMmR6aIqgMseWxhxi843ou6Ixz4bq1vGHtWTR3daHnLsZqaaE0XcGVEd3tOTwhkdKif2ScBzY+h51sRpdHubyzhY9d+gZSjqAmYH+pQORYtLQ0k1A2+w4OsFMmcPyA6fER5ixfTMqNUQ0M"
+    .. "QRBybGCMyarPrPZmWjMxSlgMVUOODI/jeBkOHhzgyLYdLFzUR6Kng22PPMP0RBEv6SGVwJE2kY6oVH2KxTKDR/qpBVWqWuEKh5jr4XkuAo0QiiCyGBgNGZ6M8ANNLN7E3q23EIUVIepJytZ0Ov3dSqUyPUOlXXzx"
+    .. "xRfHPM9TSinrVZPWx+VOoJTBFqAjxd7hMf7yX75Ic3sPn3n/+3nmrp/zj5/+J1o7WtjQP8XUWEAqpdnz7P10z29ivBrjyNanSKdSdLZ0s3rtIj66fj6tLV2YsSJm/xF2TEwQn9VHqVTFuH49gSslgYZndhxmqmSo"
+    .. "mkHs3bs5b8lc2h3oWrAMsWwuQ7Zi6+YtHOw/yur2uaSb86gSVA/sJ5gcZ3r8rYxbCaQGHUIQGZQK8BWMhZLRckDBtxguS6aPlhDpNp6++17k5DAXfuDdrL74fG7/4bXEQhdhHBSQSGSJIkPgBxwdHOHHN9zMYKXG"
+    .. "7rlHWDK/j7TnsGTJApqaMti2wfMMtgVENfItvXTOWcu+524TXiyjhCDm+/7FwI/sRk/bqosuuohX27f24sZKZVS9Glo63HDH/TzdP46pKb71t3/LwYN7WLLsFN7+/vdyOFAMTRapTNVo62xhVsZj6OmtbJ0KCTEs"
+    .. "WHIqE7u2MVtpch0tFNC4/jhe4BPUKpSLZaqlGpEXUlQGy4Lx0RLbjwyiHJupvRt5Q8ZjVksLU9E0yfYmYjmPtpjLm153EdsGjrBl0za2b9mLzs2jI2mYne9mtH8YZWKkHQcNhJHCCmrUtGRKSKYqIeWqxA8BoQkj"
+    .. "SeBm+cpVn8bLxVlz8evY8uTTTOzbj0ymUZFCAPGYRxDWsJJxhocm+NmPf8qC3jksnL+AJYt6mTuvF6FtXDsinRKkkpJyRWG5Nj0Lz2bv1ltpRPo0Roz9SBpjnCVLlpy5evVqXo33+eIJEVprdBTiWg73Pf40//GL"
+    .. "26mNTHLTv32V8YFjeK7L5W+8jHxHF/sHJylNlgnDCk35GPGoxpO33IoScTr6VnJguJ+R4Z2smdOFk03gJOMIy6PFjROOjzM0Nk6l6jM+UWF0MmCkbHhy234GJ8tEtSmahoY4d9Y8HAlkYnizWrFsCx1GKBOxdMEC"
+    .. "LjjrDGZ1dnL0uWdpCQK6smmG+g8wcugQQ0NDTEU+ftUnLJTwo4DARNRqVaani9RqVZAKx3GxMk3UHJdvXPVZRg4cYvn60wm0JtQhtoqIVEipVsHSII0gnU4RacVTjz5MpTDJu/7gSro62zCmToQ35z2yaZtEKobW"
+    .. "Ee1z1hBL5NAqmpkqdSbUP1rqlFNOmZ/JZNBav2Lbd2JicqZXznPj7Nnbzyc++yVash6XLO1Bah+RTiCMYcW60zgiJIcmSmhfkE1nKA2NUylO0dvVBm6SUV9THhmhuzJBe08W6dkkYh6RZZGPefhHDjM8MEyxWKI4"
+    .. "Ns3kcJljA9Ps2TeAVBbTAwdY15xiUXMeZSKSrXmsbJKgQWNpAVG1RsJyyHW1Mq8nx4pcnPFjBzm2/TkmD/czOTJCpVpianSUwsAQwhikLanWKhTGJ6iUSmAicq1ZsrksLa3tDO7bw7Vf+AKJuE3nvNnUJgtEJsT3"
+    .. "q6iaj9AKpGIsKJAUii987tN89wffZM6sHrQJQdR50eaMTWvOJhN3sYhobV9IvnUeWgWNlDfzs9lsSgLz169fn64Lk3lVnsuJPemWZVEu1/j0v3yJ1Qvn8dWr/g+PPfEAE8UJ/Cigb8ECmpYsZ9d4laCqiaIAx3UY"
+    .. "Hx1n6fwFLGrPMdV/mFAElAqjnJbLkkvFCSwb7YCOu8TiFulykcKxQUqVErVqmeJYgZHBccqlKpYfwqFDnNbZgrEVQdwm2d6GHU/ixBI4bgzheEgj0EHE/sMHme9I3nvhuazp66V65BB7nt3Egec2EY6PUhg4RnFs"
+    .. "DBHqev1qpcLk6DilyQImCkimPdLpJF48TVNTC8d27uTpe++is6eLarGIigKqtTJCKSJb4lfLdMSSfPNfPs9f/fVfkksn6mNLRL22RBhBLmkztytBLh6Q9BRN+SY6Zp9CGPqiMVcnbYyZLzOZzMIlS5a4v4n9O/Gf"
+    .. "EIKbb76FhfO7+N6X/4kH77qP715zC6l0Crtapbu3l3HHYcfmfUzuPUIUVbFjgq5Fc2mybRai6TA1dK2EnhpjdjZJIp8lMgLCEJl0kY6hJxGnNlEg0BFBVGV4dIjBkREMhsLYEGubmliab6ZofOzWPEdLUzz4xBM8"
+    .. "+fQmDh8ZYKxQQGsIFWzfvp117e1kEjZNmQSdc7twUi5jA4cZ3LOH6fExtFIQaWwDQdWnOFmgVCgQBj4xD2JNeexcO1Vf0jpnFruf2sTYsUG8dILi8AgKhXElTtVgrBSnvO3NLL74/Hp2VoFEPs8ra4NE09Pu0tvt"
+    .. "kksrcjmb2X0rkI2RNCBcYKG9ZMmSpYsXLwYwv5a4nqkwwzxfRm/qNS0GjRAW/Yf7MTrib//qL7j7nnv4+F9/AnSElEkMRUw6waH+MTbfehtGSVZeeCHGcTHJGJVKwOqmJLlajQOFEqstQXvWRqXT2NIhlnBwm/MU"
+    .. "j5Zpi1eo9B/FbmmDMGJoYBDjeGgsWvwCZzVZJONJtGuTnNVJ3NI4iTSVcsix4SGGtm2hq6mD4nCBrliCs1cuxA8UKSUJIhCxJOl4HMvLUanVSCXSBLZAhyGlio9fmCCKJvCjPiwPYgkbr62dWhQSEeGlYgzt2kZH"
+    .. "Sxc7xofxkGg/JIxslr/9j6jM7eWexzey6LILELaDMAJLOHXlaNW1ZNKBpXPylKqa4WKZBYtWYLtxtFaNCY1iqb1gwYL5ra2tDU0ofm2Nff2L55tXBAKEQSBRUUjg17j8sjfygx/8mE/+/aeo+gHpdI5QGWwvjp2d"
+    .. "zfaNWxjc/hQdq86kWKwRBYbipGKoEiKSsEhU2DrWT1CZYs+4z8CWrVR9TUxHpGyHXhmnOxWjTQ8zGZQJ0RRGR7GzOapRQKYyweIV89k5MsRUzCZ1SDN37mza2tsRRjJnfi9RpBg7OsYNG57g4vPOo2t2N0GphoeF"
+    .. "0IYo1BjbEAQVHCLcdAopHEqBpjhdQRVLVEsTyGqEjOoZ/3RTlkQyTq1SIZZqZrI8Rc7SJJJxhB9i1wTZN76O5CnLiEWC7fsOUA7OIm27Df77eTqt7lhEZHMWi+flsI9UUHNmk842M10YFZbtAma+PX/+/MUvNYPs"
+    .. "ZENW6upXorQhiuq5K2lR73+3HfzQ5//5h0/xvf+4FmlJYskMkZEYNFImUF6OvU8+RHlyjMhyKU1PM1UoUQwUkxM+jiN4y6x27t60h45cmtNXrUa05pg2ispkkf6BYWa3pegI4yzLJbivWCBhxSj7FWJBilhxku6o"
+    .. "QtJx2VOaoJJM0xxPIIxFGCkgRBiHuJfAtV1amlo45dTVGNeql2AIgSXqDImUFlPDh9HVAomm5YTliLHJGtOT06iKT60WYrke0q73ZTixJK7r4pfKxOJtxESCYwf3oatVjDE0n3YOmdPPInIcHNdhoqQplqukE6mT"
+    .. "5gjrui6ip80h7iRJJTSdXbOYGD2G7XhobRbbp5xySvXEoppfB6BBoLSgXNWUygGhAltIYjHJnbf/nC998XNs3rwZhEdzS3udkNEKoxWWlUGrMoM7niLfsxghExRLowyNDOG7LiIIGa44oGtkS+NELsRbmkm1ZOiJ"
+    .. "O+j2NtyYhycUbtnQLSKolCGfQqJRfkAtKLGut4v25iYKqQSVdIxFfQtARSgk2BbKCCSSJzc+he05tM/ppjw9BsKi1qhVFcYgERT7D1EsTLC4uQW/WmX6cIlKoUgUlDGehY45aGEIgohQ2CAEtXKRjFJYWlAzBr9c"
+    .. "IdbRgbd2Da5JklCSKOuQyOcZPDpCd10DnrRAUCIRUtOcNWRzeXp7e3h24yMkUwKtRdVWSi39deXbJ+TsUQqmKxGFYkSxFBEpiUQTi0FLxxz++u/+H8bGBrjlplt4/MlNqJpNMpUhUIp8WxOTh3ZTHBtkzvpLUQbK"
+    .. "pSID+/fjxVOMjR7ji88dRCZiHDhylAcGR3ngsQ10zuni4nPOZmnfLFafspy8lhQLB1nZkqRpoMpkGOJKiLShUqsya24L0rFxbA+pFJYtiSyBi0WIxrFdjg2NMD41yeVvvgydtDHTBlsLatIQEuFKQagjSoPDxFNp"
+    .. "UrEM5XKRoekCQa1KGFVx00mq5RpWKChXAox0sWyLKKhgTERIgLY9jC1Jzusl1daDLSxsVxBPudjTDgcO9bN29bKTmywDRtZ7NIwAz4J5c3rQxoiGP7LUzufz6ZcHYL2PIYigVFVMlxW1gLrtM6CrhmUr1tHRth4H"
+    .. "eP8f/RE/++nP+cxnv8DBQ/3ksnly+RgT+3ej/AgnmSSSGjFd5tCmJ3AtlwMb7+HL//xZ3vDmN3PrDTfw6T//a4JiiS17DrPxgWeoScNfffTd/J+P/CleNkNvrsysPTsZtz0iLRGqxmwV0JVIo+I2s7s6kbE0JT/i"
+    .. "2MQotrHIZfOk8zG2bNvOqaefRvvC+aB8bCuFVEWmqmWmfI0XN1CeImtr4j3zCIiYmJhkcnwCYQyFwcP06hSZZx9ivNkl9BW2dJG2hdQarSOMihBa4GaaiLV2gxND2RLPlSQtC2Jx+svT9Qo+8ZJu4wkdfvUJUVJK"
+    .. "0WBj0nZbW5t5OQ7M8aS/AT801AKFMRbCqjeKREowWajg2hbNOYdUMst73/s+li5Zzvve98fs3r2Xbr/IyNEDuNJDSIsIjS0Ewehh4rkcnfMWsXb9mXS0tHDJG9/Iwz/8MQPPbqbL9RgsldiNRlpxREzi5TOoeJEz"
+    .. "WjJsKowhUnNQQYHemCQZ94gyKdLNLdyx4TH+8fP/l1K1QmtrGxkvifYkUmkuv/yNDI9P0ZqP06RTpKOQgpAokUEIC2t8mIU9XQy2dOOHPuG0j6r4lCdGyFSH+NiKC2lLKP75+9+lsvgshCXQCHRgGm1pAhWF2F6K"
+    .. "fFsXtpB4rocVc0AKdDpFqVCjUi6TTKaOD/k7cTCOOO4s1q/29vYTTZ2xm5qaXmbw3igTEA3RBrAcsAyaEAvRqPWUSKzj447XrV/LP/3TP/Inf/onHDtyiPJ0keauuXixGMIYIunR2zObzq5ODjptDBeLLNeGjq4u"
+    .. "upYs4rEnH2HJ4hW8adVqTimV6ZszG5RGZ+K4zUlWtLaR7d9HkDEU/QDPsfGycexcjgcfe5qb77yXFatP45TVp9I3by4y0nzrP77Nzbf+gifvfxRhDGHSpndWL3ObWylEhtGyS3lWF2d1NuO6cQIvRVioMTJ8DCvm"
+    .. "oKfG+NjFZ3DWgi4Oj0/B0YOMyByJ7tkYDEqF9Q4qR9YddjS2Z5OIuTiOjWe7SGFjxxNURwImJydJNqrVfp0ibGpqOt5vCAg7nU6/5GiqkzVpWlKQiNnEvIhaqDDaRmJjyZB4XJKIC0SjF6NOryne9OY38uY3v5Ef"
+    .. "/egakJJkcwu6WqY42E+ifRZhqcCceCd7SjUGR0YQQuHaNgsWLWZO3yIKSY8z3vom5g+N4KgpjNKElsBtTTNnLMv6RJz7JseYFiEKTTKfxvZsmptz/MNVn6Kzd9ELPkd7VyvPPvooS7wcYanEaKlCZdshHje7Gdch"
+    .. "kQC9yWbJm96EXLwcFRnK1SkmJo4hYx6L0h7rW3LooIxbMwzt3cOUipOb3V1PkWPQQYBluxCzCEplpg8epv209RgPErasN8F4SWqRolQsvWzKMplMvgArGYvFzMtOzgqDbUM6YZFL2sTsEFcEJBxNKg7ZtE0ybh3v"
+    .. "NJJSoHW9dfktb3kr2UwetCaezTN6cB97H7wdy68wXphieT7BQlNmy779DW8X5q1ayalLVjE33sqhR7ey+aFHmdXdSsL1QBtEc5pETzOnd6VJVMsQ+KSzcbzWPMIWLFo0l/b2ZrQOUFGACkO01ixcvJgLLzyfWeks"
+    .. "LV6M3oRNU8bFTrg42Fiuy7JTV7Fty7M8selpRK2KH0xCeRKvMMEiW9PU2oTGY7BYZdO+PUwfOQjTZUyjl9EENYgUBoMrYWz7diq7tpNVNeK6hqsiLNsmiBSBHxwfhPTrLtd1T5wJZ2zHcV4+/ylAYkjEBVLGiMfs"
+    .. "xhQljee5xLzGVCYzE+ybF1SrzZTSWVJSnRgiGD1KODVOSTvEopBlnuGJwTGmA0U65rD0tLXsvu8xLm7qZDLw6bukl9WrlhFUqsQcD99WWG0ZTl0xl96j2zg8MU1mcSciE8dHYyKFUQpP1lu+hBEoo0kl0yxes4Yn"
+    .. "HnmOyBLsKk3RtXoNH7zizbTGWtm45QnOuegCHrznAW5+agemNk2lPAKFCVpa8lzU3oGdjRNM+Dy2fQeVMMIcG8QUpzGNCSFCBUiRQAiBY0nGjx5m8sFHWGFsntq+g+alK1j85gsZtwVqptHlZSBx4uQrQNha62kp"
+    .. "ZfrXK2DBzDANKSARg7hnn5AL5JfqHGd+ppTi6NGjVGtlwMIqjVIcGSaMFMWDO7HdNNNlnwvmz+G5TTs4OjjAkrl9tObzvP4D7+bBex+gs2su55y1HDU9iJE2RihEBCaZpH3RPK4YK7DhZ0cIIgElHzebQgkLC7ve"
+    .. "JNroWxONdsmlK1ZQW7MO25Y8dfNP0MeGObz/IJOJado6Ojhl4UqeG6mysnkJobBoLU7R0ZKg21b0daewkykO7Rvk+seeQGmBpxRhaYSg8elDo9CEhJUq/lSFoFxm66P3I1yJt3gJvetWMjk6REKFzJ7VfUJ99i+F"
+    .. "3i/lngpjzLSttd4hpTztZVnQk0wP/HUJ3hmWp6kpT0tLC8MjY4wODlKYrE/SGDlykHRvH5YbZ25HE4sdw/5nNrFkbh8qCuldOJ/ehfMB8Kf68cMQz3FRjUF2Qgp0Nsa5553GWY9vo3JoP35xLU4ihuU5qCjEacxy"
+    .. "Oc52aMOSZUu52Q64fPXpfOOMdUzXNN+58cc8vmkjP/3pdUSxBPvHp7GyGSaO9HN6KmRgqMD6FYvItWWJLI+fPf4k2/oPQTxGFHepjU1gBxosl7JW2KMldHEc7Rk6TllG77kX03vWeXQtXkBYnmb0iUf40zPX0dzU"
+    .. "9JLV2jPfmjnTKIrqaaP6tcP2fT/+sqm0l2FkX3zt37+fm2++me9///sMDQ0CgomREUBiCUlxdAgd99BqLUmhWNPZxOTQEGEU1ScLRvWhd64liVTQKO5pKOeGVxxFAZmWHB9550U8teFxytqQbzyoKgzQKmr0LdQD"
+    .. "Yhlp+nrm8vp3XsGGm25jxYJFHJmqMDwxxdt+/91c+obL+fGG+5kUFuXRMc4248xxYwxPTHH2gnaSvd08+NQu/uvex/FDGyuWRFoeleFhTFBFojDTBXzp0LRkOYvf8Abmn30OmVmdxGJxyv0DDG/fxLtPX8/rT1+P"
+    .. "0RFC2r8ihTAzaRh8v9aoOQJjTNwGdgErX0vgTvyeUgrbcXjDpW9g4fyFPPDAA4xPjgPg2XEMhmr/UYpTU+jAp6etnf3VIuXpIrl80/Ha/0ppnKhaQgpDZCI0VmNCkiQmPap+hRWnLKC5qQmvOYfl1nvmMRE6qoGU"
+    .. "aFEfJistiYgMb3/7laxbfzoDR46w+677CbMeH//rj2ECw80PP0PVZLELI1y5tIdd+3Zy0fJFRKksD+0+yhe/+wP2Dowg7CwZK4Ul4MDhXUTj42glSS/sZcHrLmHeeReS65qLFXMxYcDYzifoqZT5k0svZs3yJUQ6"
+    .. "qk/c+BX1ReKEMy2XK8d9CSHELtvzvH0vgPq1Kihs5AcXLlzIwoULiaII3/fZtn0HX/riF9mxfQe7d+0mMpqY0BRLBRAOA4OTfPPa/2S8GnLpZZcxPjbO+OAx0m7EmWsWkrRtoijESBBYKG3Qlo2UBldZLJg9By0U"
+    .. "kVHUy2YlGIW03OfXqihdL7yNYPbs2cyZPZsbb7yLd11+OWeeeir33f8k/SVFrHyED/S10d2W54ktPkFPB//np08wXJpm2659IMFzDbarKRaO4ZemiHfMYfn5b6Dv/AvI9c7Btm1sRxMrDNP/2OO8fuF8fv/3LyOT"
+    .. "yxIpHyGdl9ReSunj3bwztnBiYgKt9QxW+2whxI6XzYW+yky9MQbLskgmk5y2fh1/9fGPk8lkuevuu/j6N77Ovr17KZSrVMOAJbOa+fPfewvP7NvOrTdOIMOQuR0drDxnDQlbIFQERoDSCKlACpSwoD5hCx3WwJbH"
+    .. "P1Is5rFzx07+87qfseLUtVz2hstoyudfMDHg2ee2UopK/PMn/oFQV7jtmWcoHhvhsr40b1k5j4PbdxDFW/j+0BRepoWgWCQo+TiOTRCVGB8pILNNLLz495h38aW0LV6KIy1CHeFaDqYwxe3X/YTEgd2846//F5lE"
+    .. "nFBHOJZb/yzHqcr6LDmlFZGCcimk5kdExkZI6G63GBweRhsjGk7iDtuyrD3U9/44rzV4L/56ZqLt7DmzaW9vZ/GSRZx++nr+4F3vYtf+w+gQ4kGJ3z9rHe9dOpdyVCMej5H0XKq1abTy6/SdqNecmihE2AYpHQwS"
+    .. "JXU9FYRANGazCQwjQ4M88sB93HrLLXzrG9/ijW+8jLVr1jKvbx5RFHHPHXdx5uqV+FMFDuwfYtNTWzgtJfnjM9YgggoPHjjMbZMKbRz8gX3s2vQgRCHK2GAnaF+3kjkXX0LH4pXEWjuIbI3SNZKxBFa1xv0338F4"
+    .. "uUJLJoUJo/pkKmEdZ7ee99rrZ+SHilJFU5hSVGoWZd/gBzW0HWPfgX7qM6lNAOyxgX1KqWnLsppfjSf6ahpgOjo6UJFCWpLFixbR3tHBph072T4wyqktGUojw7i9eRLZJBER06UAW8s6f2jVyQGjFFIb6vZcISVI"
+    .. "y0YIq17VDBijUH6FM9ev4rafX8fefQd5ctM2Dh48xIMbRjm4dza+79OU9IjVygxt3MgtDz9DtlLg0+++gr7uVjY9t5sHi5rhaZ944RDFYoGgXEAJi+zshcy64BKa1q4lmW9B2RKJImF5eF6cWMxm8Mh+2rq7mLdy"
+    .. "McW7bqk/WCdZVGmebzBDa5uqrylUBBNTikpVESmBORiwf/9RY9tCGJgWQuyzgZJlWfuA3yqAJ5YezkwujKKIr3z1qzzx6GMA/OvNN/F/rryCxa2tqJKPlUwQobCERNt2vZtHaAymzseaequ4iHyw6raknn6p9z/q"
+    .. "SB13wxOOw7pVS1i7bhXGGGq+T6VcwWBwbEV6TLN/3yEqhQH+8Y/fRt/COTw3NMT3dxxipKYp7X2OWlIzdGQvyAQtp1/EnPMvJjlrDtqNYbBIJlzijsGSIdKqE9np2R3MWdzHrk3PUouCE9T7yZMF2kAQCoolGBir"
+    .. "UJgOQTtIKTk2PMnw0IBxHFcYbfZNTU2VbCFEqJR6rBELal6bVQQnndZ3oiqdYdRXrF7N3/3d3/HA/fdx1+NP0j86xvsufQNvzp5LX3cPrq2IIh9f1cAYHGNhNfgO23WQRhBGNbRRaKMQlguWgyUFlmWO944oHVGr"
+    .. "KXSlXHdtpCSX9Oo/830mogme2LmFd7/77Sxb2sutm/fyn3c8xOHRAjufuZ+oWEJM2pDuoH39RbSc/jqCfBpPG3JSEncFMcfGcetUIkRoYSFcB21blGtVdBD+muF09YeuFhgmiyHjhSp+AJYRuI7DdGWSkaEj2nZc"
+    .. "CeYxILQbNZ2bf1uOzIzqHBsbY2hoiJmdgI7jYFkW5515Dm9781sYGfszbr32Z1z97e/yyR/9iO9uuIc3XPo63nThuayeP49cKokQIZFW9dmeQjA5MYHwHPLpLKHvg1aNniuJ1gIdKaRtHR88gKlnuI1W6Cgi1CFI"
+    .. "SdzOUPEmWXTmajq75/Of99zHfz22h+lCjX0P30t5eAgZT+N2zaN17fl4S5ZTisfJCIUbE1gu2K6N5bggJLYQWGiQAicCoSUTUwV0zcdS+iVmepjjExLrU6xAGAdLWPXJ/5bD2PARStOTwq7Xw2w+cczIPVrrmpQy"
+    .. "9lqp0RPZmO3bt7Nnzx7S6TSzZ88mHo8zPT3N8PAwg8cGUSqio6WZt115BZe88TJ+8tOf8fd//w989Zs/5Af/dQtnn7aalYt6OXPNKhbOmUVzPk4mncCvhWx5bh/dsztY3TsXC01IhIxCtLCJsEFbSBNglA/SBcsi"
+    .. "7tRjSK0VoTGMVKYYnqjx3NFxvvifX6R/oozd0sLuh+9mevAYdraV2IIlxJadhd3Ti4UggcCT9emGRtSnGrqWqPcz1EccIFWExiWKJOXhUZxQIU9CmhwfmUl9TqlEkPAU6ZhgqmIILIWdjjHQv9OEQc1yHK9mWdY9"
+    .. "UN8qIoERKeWzwBkNNfobr4aZGebW39/PgQMHeN3rXkc2m6VcLjM+Pk4ikaCvr69eQ1KrEVQrPPzEY+RyTfzeFVeQa27hy1/+Mju2b+e2u+/jtrshn8vQ3trM3O52Fq9fzcK++STKIbu27MYuh+SzKWLJBI7l4boO"
+    .. "sWwe20sgsTE6QJkQpUMOjkyzdfdhDh8bZf/+A+yZmMBrbmfk2AS79uxmwdzZbL39FqYHj+Kmm/HmLsbpmY/bMotI2ESqMQDPCFxj4dk2bszCyAgtRIM0FyjhIl0XV4dMHz5ElxdHuu5LkS31USNGYUtJKu7Q3BQh"
+    .. "bUUscEnagoEDz2mttSWEeHZsbGwEkHajQzdUSt0tpTzjtQroZ+zdtm3bWLx4MY7jcP/99zfYhHK9H05r0pkMsXgMFYWccuo6At9n566dLF6+iN9/19v5wucOUPYjEulmgmSKQ26ew3tr3GcNE96+hQ/MyfPO885k"
+    .. "/+PbcdIuTiaJiCXJZvIcGn2GTXt3I5FomSCyExTHJtkxVGDbcIFYe1s99Jiukj98kGhsmPaEYPeTD+MPjeClcljzF+Kn8+hymQQh0krVA05LYlyJsgVYNlI4WJbXIPjr6juqlKmMD7Dt8UfJFyf4u4/9L1zHPumS"
+    .. "Ltk4dduWOC6kE5IgcnEsQxjZRFGBw/ueMY4bwxh9d6PF2jk+Ib0B4FWvlRMzc4NRFDE4OMiBAwdobW1l7ty55PP5478XBD5Hjw0wPj7Jnr37qVUqLJg3F884FKc1uquXdLYFTybw8k1IaVGobMHSikosy8K+Pk5f"
+    .. "3Es56KzH93YclUzzxK79/OuPbuK5yTJOIo8phVixBLq1iczseXSu7SOZSxH3JKJc4cgzTzB2ZCf2sRHCUgk3nsPMXoDd3kuoNWF1ClEp4KbzWEIipcZ2BG7MwYpZGNvgl6eYOjSCP14gmCgw/uyzdLdkWd/dxpVf"
+    .. "+hynrlnza0hrgW0LPG1IxQRCuLhWhBdz2b3jOY4NHJKO4wLcPaPobCGEMsaI7du3P71kyZLtUsplr4U3OnOjruOyefNm3v72t9PV1fVLIYXruszrnce8XqhU68N/Duzbw0Rhmme378bIDG3zlxElPCIpicamUFKQ"
+    .. "TeeYv2oRHX0SkXIIyxFa2xwZn+bmex7ixi3bGEhlaZ+7HDNWJjnHo5xJ4nTOIdveSWAEgRSYQCHTGea+7mISLTn2b7gHMTyE3dON7p5Lau4CGB3GL5fwcfEsG1sqCANEGUpT0xSnxujN2ORTMWJjI2SlZPmyBfS9"
+    .. "8TwW9Mwm19zU2ApjsI14CQ/j+djQtg3ppI0Xh3hS05SS3Hrjk3pqako2NTVtHx8ff7rhp6gZi2otX748iKLoB8AXNGiBlsen1Zq6l2SJl2sazQk1HM1YwtDZ0faC/okT1/HQGKqaiHkk4q20treigRvuuJP7t++i"
+    .. "NjyMki6FSpGoNA6mjAhqtKQkKpliy3iJwwNHKWmL7994D4/0j8Hs2SxefTYLmtLce/tdNJ11IYvcJE8++RS27ZFobq2XGOoQWbMou9CzfD0Luvp45Bc/oVorklTgJfNUR8ewhYXv+9QmxsjIAGt6hAVtOc5bfQrd"
+    .. "S7qZ3Zyjp6eL1pam49OJj/sDxqBVfXfvr8y4NpaFWKKeZrEw9X0XwIZ779G2bUsp5Q8azJkNRDMA6oa6+4VlWZ8GYkZLIxsZXPEKndITJWx4qJ977r0dL+bypx/4yEnVrDbPN/lHUYSUkj07d7Np936spiaUC7GW"
+    .. "VmJDCn/wMLm+PqyePpSMc2B4nPWrF7BuVjt/+cWreWoqpHnZKmYv7OWMNcvZd++9JIWk4iSRrV2ctbSPJ/ZsJb7ufBwsjPAwsn6/pShk6dIl6OkLufsX11IdPUJqahHJeIbpkaP09c7i1Eyc81YtYt2yN9Pd2kwu"
+    .. "k4WTAHa8kp06v2m9zKz7iWdtdD1e3rdvn3nyySetWCxWNcb84kTM7MZBamOMJYTYa4y5X8Jl2mgF0jKNelD5CvsGLcviqY2Pcs2Pv0NHZxM33HADCxct49xzz0UrdXxA+Yv3/tFYkHXf/Q/y3MEh0r0LKE6NIdq6"
+    .. "sHpmYyaGmSpWyXpJEguXYYVHma4Ivv7DG7lrWz+xzvm0tmWZFU/yzL0bOPD0JuTsuXgixlOjY1wydzazDu5mbPAorb3zCYVESx8pbZQQ7BwaYM3ZZ7Fn7zaO7drO2P7NaBHnw2+5lI/+0btZsGgBtmMf1zRB3eXG"
+    .. "MqaxL0o8f1a/4aSPmTO566679MjIiNXU1HT/2NjY3hMnFv6SnYui6P82iuhFLVIoGuOPxSsZ/FO/8c2bn+XYsUEWLlxEIpFg39565kqdMBz8xK1fUJ9uBFAIajhuklRrMyiBGRrDjaXILVxMVKtRfOhBtm3dSLl7"
+    .. "Fl/43vV86+EdiPnLceM2EwcH2FMOORpqTLaNciZLZWSIuDZsr2jmrVhFdOwQASUcUcVtEAvSdhgPQoaqPudceDkJJ8maphjrqPHe97yNJcuXgGURaE2kFUorbKNxZb0v8sQhrq/FNTPN96abbhKO4xjLsv4vJ5kP"
+    .. "OnOQyhgjHnnkkQdB7xKWJcbGQz0+qSnXzCuMLeq/feqq0xEmzrev/j7VaoWzzz7ruHS+uDV7JlMhhMAPfA4fOYrRNZyYIN3TgyoVsWrTOM2d5JavBqrsveMWnr77CbYOFBG5ZtYuX8KKWR3UaiWsljy1iRIik6N1"
+    .. "1hwmhg6ip4aZVhalTButnqI60I/l2PV+fq2RCtx4ioHJAl1LFtPZ0cXH3nklP7vuOyyatxitFJYxOAikEUgshLFOSAm9dldjTz0bN27UTz75pIjH47tGRkYenHFeXnLg6wUXXBAZY/5Vwg/GC1pHQYV0StDeFieT"
+    .. "eGnNcOLc0LpKhLVr13L99TdRrZXJZrPkm5pfkCc88bUzvYe2lDyz8WnufehR7JY8Y4ePkm1tx6Rc1PQkIpMn1b4At6WZxLOb2PSD/6KcdfByaQ48/ThqokZ8Ti9mfJxoeIDUGacza+585tiCp57dQkemialUC7nW"
+    .. "JtTENO7COJGlcbWFMRJtGaq+z7SO6Jg7i+3bd/D2K96G1tQLqWaWXR2volaNrPlrSyHPaKZrrrnGlMtl2d7e/q9TU1MRLxr4+mIAdYOZua5ciz5p3NiCwsS0roTIWhTQ2+WQSlqNNjOe32Z5ghSdWMWNUbR3th1X"
+    .. "qTMc3YuHvM14X7rxJDuugy8d7I5emC4yPTJEPhFDVwIcFNgW8fxsznr7XDZf8x8MptpoOWUVXjyDFUtgp3Ice2QDIuORbO9hcLLIGQsXUB3pZ+f2Z2ltvgjT1gO1AzhRDddJI6RBIzBGUZGSsekSPSuWsfWZx/GD"
+    .. "Gp7tYrSoD+Z5Qb7Tes0J5BlNdPjwYX3TTTdZiURibyqVum5mquRJVWjjpmb6JPyCH36yGmrKAabsK8anKgyPBfhB/UnUOjg+IYqGDTtxvoxo7MXRUYRWUX0tzq/uXKvbYK1ZuHAh61etQvk+yc5mTNyhMl3CVCvI"
+    .. "0Cd0DJYjsJGIlnY6TjsD0d5Non0uVr6LWmWK8eFjpLt7ceMekZHsnKqybv06MoOHmNy/D9q6UJ6NMIpYzMV1JZ5n47ouqXiKsVKZVGsbQalGYWqqXlODecndvL+N7M33vvc9c+zYMdLp9Cf37dvnH08ZvhSAM7bw"
+    .. "+uuN1ZNL3LB738SDNZOypgOhqqHNyIRiYirC1AtSjo/SMidZd6cNGCyk5TQSrfL4ipyX1hsG3/dBCJramqkMDlM6dAyr6KOkxDchKqwiVETKtSkePMboaBE9WSBXqRGF0zjhJGr3JmR5gnRHH8rEiSXiTFclo7F2"
+    .. "LrnoAkp7NyMdl9ndy9CVCpbXoLBsgWNbeLaHj4RkitaObkaGRuoHe0KzyW/rmunTPHbsmPrhD39oJRKJB4eHh294sep8SQAB3vGOeulh/2jt40PDpahYFlRDYaZ9zehklSAQSOE0Fk6ZF6znNqZejBNqRTXSlEOD"
+    .. "r+qW4niT6Eme4hm74rouRiv27tlFvCVDrCWP1d5CqncuojmLKpZJaEl1eIhDhw/Q0TmblctWku5pJz41wpziEPlSmVSqGfJphKkR7n6a+KGdHJicJLViBfPSCQp7tpPo6MZJJLEbY6ItS2JZ9ao1W9hUNWR7Z3Pk"
+    .. "0NHnfWvx3yJ95pvf/CZHjhyJOjs7P96YHnLSZ1++hAHVN9yA/Pv3zXmmMD59daTjVqUW6MAYqr7G9+vVXvWdQ8/HiFobgkBRrUaMTygGBmscPlJhYNBnsqCJ1C/HOMaYRj9B/XIsi3KpxER/P8lEgkQsieXE0TKG"
+    .. "8TXaD6moiMLRY9RKJRJL5zIcc5iYrhGbniIRFNg/Okps3jLscoHCfT+n/z//nV0/+lcm7riekYkqay97A/rQHny7RqKjE0s42JaD3QDQtgRxaVHThgkTcmD/gcbnU/8t0rd//379ve99z0qlUlfv37//mZPZvl8J"
+    .. "YEMK9TuuN1apFPvbiYnC/ijyZBgorQzUwojGfNLGkNI6jRJpQS0STJYVY4WQwTE4Oh5y4JjP7kNVBsZDIiMaWy/NcT5BNcajykaJxESpSrVWpXhgL/3PbGJk+xbGh49RU5pacZK4FiTTWaq1EkPlKqGChA5xgkkO"
+    .. "7j+KHU9gqhPw9GN88d2/x79/8V/44Pvfw+CGO7j/K5+jpn0WzeqkuGUTGddB2rJeKypkfW+FI5G2wFgeZeFybHwEUGjz3yJ9+rOf/awcGhra/7rXve5vG6rzJYNw+SvcWPMO4At/0zodhrUPKSME2FqFikg1FKIx"
+    .. "J3iYdcYm0oJKoJkqKaZKmqmyYqIYMjLhMzBcplRu9OKbE6mlGbVat5NKaUrFCq2VEhfNyfO25bPodTTSWASBQZeKWNk0gZPGKmncUpmMk8Q3MfbtP0Kh4pOyFatn53jw0XtYvHIZ//S5z/EXf/0x9OBBdj/xFLPP"
+    .. "PQ9TKFKaGEbGvfqGS+qNN7LRkCIQeC0tRLk0laBarzM1vz3psyyLe++9V1933XWira3tQzfffPP0r6vZ/ZXBy5VXCmWMsa760977olr5K+lUxkaZSGjxojRIHQANqAgqVc1oIWRiOmSqrChWDKUqjIzWGB/3MS96"
+    .. "vWysjdONLdPlwSHW9bby1Y/+Id/7+Pv49w+9k+/88Vu5fEk3lYl+BnduJJ7wSLe2UD24A3tqlKolmAhdJsYLxLu7mNc9j3NPP5077nuQyLfZ9NRWmlo7uOqf/4mwWmA4tJmzcjVDe3eRsOp1LJZdp8Isy8KSFpHS"
+    .. "yEQC4cUJQo1jOy+vB+xVUmblcjn627/9W7tWq31lbGzsvpdyXF42gDMPx/XXG6v5ira/8svTT2ZzOdtxLCVOLAcQJ0igMlTKivGCT2E6pFxV1HxDEEhqgUWxHBFFNBaD1D07KRuFTkIwPniMLRvu5q/e9kZev2Ix"
+    .. "cSAmBevmtPDpKy7gfWsWsjxlEw4fxVQKmAPbWdDdSpRzGS8U0Fac3ILFBKEmkUhwxx23c9qZp/HNb32Db37t64wPjDM9MkSpHJLqnUcyBqPHjhCLeVhCYEkLW1rYloUWEIul2LN1LwP7+usz1n4LItiwfeqzn/2s"
+    .. "/fTTTz+ptf6rxobrX8tf/loAhRDmHe/AvAO0lJU/9FwzmU45QgitZ5pMzAkZiCiCmq+o+ZowMkSqvthKKYMSNpEBTX3ejG7sCjTaNFrXDFs3PkqnbZjX2k6xWkYjidwEkRL0tjTxB5dfxv++4gqcg3soBj5BexfP"
+    .. "PrWJHsuhdOwAqYULyLbNZrhS4TOf/Veu/tpX2LbrWTrndvEXf/ZRntv6HJO+TSzm0Zq2sYoVilMlXKe+qMSS9c5iW1hIIYniHlv3H+AnP7uRekW7+KXxYifLwrwSysyyLH3fffeJr3zlK5OzZ8/+QyHEjFv/a9/s"
+    .. "ZbUlzWQrLj+n48ChY+UPxj37BjSRkfXtjMIYtDH1ZR0apOXgxTyML9CiUUCExqIeZ0lZj6eM0fVyB0x9M8rkJPu3PseKbA676pPMp4gcwbHxcY6NjrJr/yGe2XWI1114IVdcdhHPjE5TGJ+if+cetnz/x5haSMsp"
+    .. "KwiMxu3qYSjRwb9984c8/OiT/MWf/RktLT08NFxgefc8ZrU3Qf8+Nt3zMGf9xRo0GmnNLN6Q9eFFQLkWEiSSDE4XmZocI9fUVG8usezjY8e0isDUV8i+CrtnhoaG9J//+Z/b1Wr1g/39/Qdejup8RQDOBPj332/s"
+    .. "3i7x0yiKPmxZ1reACKNtgcRoTRTqerOj55LLKkoVRRDaSNkYRRWHTNJp1E1KbGkaeY+6IvBLFUYGRin0zuHg4aM8cfc9jFarWE4c43gcPHyI9777XSxZvZpTvDgXhhFGCh58+CE+9dWrSZ56Lm5TJzrS2Nlm5r33"
+    .. "/bSfupyDt9/Et779n7SecSZi5Xp6untoTye45rbbqVrgeFadFhSyse/WgCtwlMSUId/cwfBUkR/9+Md87M8/hkQRhVF9IJDQWAKk5TI6NsqOHTtZv24d8Xj8Zdk9QH3kIx+xd+7c+WHLsn6qlLKB6OXi8ooaAy+4"
+    .. "QET3329s2xZXm1Ctlrb8kDayPruqsanElgbX0aQTEkdK/EABmpgHbS0u+byN1QDu+LZHUy+Rb+no5A//7M+46dofs+PQYXpXnkqX55GwYwwODnPBhRezatXK47sGEYZcNo0vDGEmS753PlJ6eFIQCUOITcvpF9G5"
+    .. "cCWF4SFYvoSOzk768nlu+69r2PLwY8xdfRqpTL4+VbdO1NbZFmODBUpPE0vUt3p+6Vv/SdvsBVx5+Rs4sTO9WK1w74Z7ueHHP+biCy/k3HPO+RXrdV4gfeGnPvUp5+c///nVlmVd/UrBe8UAApx/PsoYYwshPqyU"
+    .. "klLKD2gtIiGEbVv1Wc/JOIShRVUaAttgW4J0yqG7LUY60ciG1JOMz6t6A9KxaJozh3IywamnncbCZUuQlmDwyFF279nGrN5zqA9i1ESBTyoZR+iI7mSObHsz8aRLOD5CtTKJ054n5XVRC8HpmUV3Xx+e49KczXLr"
+    .. "z37MQzf/Aqepla6VK5GxGGEUYTUyKUIIhAalIfArSE+QSLZQtZJ89urvc9t9Gzh91VKEjjg0MMAzW7bz4D0bOPf09fzBH/5BPd9j9Ev2/UVRhG3b0dVXX+185jOf+Y6U8sMN8F4xU/CKARRCGGOMamTwP6iMQkr5"
+    .. "ATCh6wonIepFrbYUVKoRWlsk4w75rEs2JbGk/iXbXCcFDBbw05/9lMJUkXPWnQnSIghCBodGyTW3EUumcB0bx43T33+IiclxFvbNY/bsdjosGHzsAaTwcG3objqdhJAIy2BMRDUMSbgWd//XNWy66Ua8fIaOU1Yz"
+    .. "95RVBEGIEPXYdGa6Rt3j1AS+jxSSeCpFtr2FSnM7t+06ws3P7kTXKlQrJbRfA8ulvWc28VgMFQZg/0rwwltvvdX5+Mc//h0hxAevuOIK64YbblCvpqTzVfVWN0DULwTR+oCNUp4rLGlZpBKSMHTqEwsdgWsbLFH3"
+    .. "OIWU9a4i8XxaypKSHbt3snP7Ns458yychIuvIogMz23Zwrz588mlUtiWJBZzWbRoEQ898jAHjjhMhRGVik9z32K8rnnYTTmIJ1AyBrbExeDGYgweGyAYGCBuCZItbaw790LCmAda4TZWns9QhFI2KJAgQgqHeCKO"
+    .. "l3Qp6iqp5izVgoWybGxLQiJB2cCGDffzsxtv4oq3/R7KaFQU1adjnFBi6TiOevjhh52PfOQj3ymXyx+8/vrrrSuvvFK/2nrcV52FbKSetDHGsoT1QeBqS1qWa0mVdB2diVs0ZWzyyXrjhyXrkyJm9rWLxlNuTL2G"
+    .. "JAgC7rrjTmb1zKKruxvX9cgkU2zc+BTHRoZpamnCsR3y2RzpdJpcSytnnX0OhbFxfnLtbZRyc/BOOR3Z1FLfziIFwtRIxzXNTTlEVWMbQUtnGzU0rX19eM1NBH6A0abeji3q06akMWAUxgQ4OiLwJKHrEEsmUaFG"
+    .. "K4MxCq0jQqUp+wEi7jFaDvjARz/Ot7/7HwS1an1bN6a+llwp7TiOeuSRR6z3v//9Vx89evQ3Bu83AvDFIAohPgx8uM4qNnbQn6RO5qWyz4899hgT4xOsWrWafL6JluZmDh08xJbNW+jt7SWTyRKLx8jnm4hCxbat"
+    .. "z3H4wEEO7DvIQ1ufo2nxfKZUjZqOCAKNtnzmz25iRWcPUtf741Mxjz3PPI2q1kjks/hKI41otKo1PGJdJ9e1NmhlsKSFtF0CI0hmsggDQhvQEaaxtFkYgcAh0d5BUQo+9jef5A/f9V7uuudeqn6ItGxl27a89957"
+    .. "rY985CMf3r9//4dfC/BetQo9CYgzNvFqY8wk8O9AU8Ojsn9d6YBSio0bNx5vfmlubuaxxx7jmWeeobm5mfnz55NOp8ln8tieSyaXZtG8eezYtoO9/cdQ8xYikt0wZZPIW8zpSdCbT1GYnGDHwSOYZB6RTTB1aD9e"
+    .. "rUI+nUAZhZIgwkYG3Oh6R1NjpIw2Ch0prFicVCJLOagv2pK63r8w05FitELLOo2otcHKJAmmFT+/+x7uf/hRLjj/vOijH/mwPTUxNvGJT3ziI4cOHbq+Ad5rktqweY2uRlGUJYS43hjzLPB94KwT6CD5UrHQxMQE"
+    .. "w8PDrF27lpaWFkZHRzl69CjpdBrf92lra6Ovr49kIllnSiyLA/v2MVmY4vDEJF5nH22tGXrSMTqsGhMHdvLoxu1MtDXRNXceTU6cqZEC03t3c+k5p/OLO+7Cr1SJQo2IFFgC2SiqUsfXNyt05GO5DvFkilJ1mkro"
+    .. "11tHta63smmN0RphFFbgE41PQHka6Vg4ibg2xnD3nXfaG+6569HiVOH9wN7XErzXFMATQLQb9aXnA18A/mLGATvZ3xNCMDExQUtzC729vXhejJaWFs4880x+8IMfkMvlSKVS5HI5bM9mqlhk686tuEbS2t3NdOSz"
+    .. "sjtLVzDOyDN72frcDorxFB19S5jT1crU5ARZJ8HE3t2MP72J5rdfjGMU/nQJQo2pj5iqq86Gk6UBoUOMColMBFpTUyHVoIYjJErXv4dR9ddXq3jFCZb3zeb0U1fT1doedXR22qMT4zzwwINfueeeuz4hpYzOOecc"
+    .. "+8orr4xeyzN/TQFsABIZY6QQIgL+tzHmTuBrwMIZ0hawZsoIB4eOcf/99yEsQxj6CKFJp9MMDBwlikISiQTGGFKpFFEYUZgssKB3AR3t7Xzzm//Gtq3bcY4Mocua+LxeWteczvzFy8mn04wdPYDtSiiOMPng/azs"
+    .. "7eLIsaNMl8u445NEOsTWEi0FkVcvFayb6qhOMilVH+Ruwvo6IduuS6iK6ipTClRQIRNU+cgH/4R5C+cqoyNr/qy5tvbDPf39h//XPffcdVd9ubGWDz74YPRan/drDuAJ3KmgvpvwLmPMeuCfgA8DjlJKW5bFkf5+"
+    .. "+fkvfJ5Z3T1oo9mw4X6EkJx19jls37ETz4shpWRocKhBcWm6u1pBuPz7v/8HX7nudtJnXoblpcmlM8TyWdzmHLb0iJSmde5cYqUmNvzoe6RtOOu09YQiIiZc1MgEqCo1yyWuJI6x65MvdL1D1qj6SC5b6zrxXgvq"
+    .. "0zCEQKkAoxRGg6oUOWPFcn3K8hX4yre8RDI83D/wrWuuueZT995779Q73vEO64YbbtAvJ7PwOwPgSZybKeB/GWN+DHzasqyLAXZu260evO8xsXjREtnW1saxwUEefegZ3vkHRxgcGCWXyyOlTblSJgx8hJXFEi4b"
+    .. "N23iCzfextTCs7C7utCOTeg4uAkX4doIAqTrkrFdDj28icl9/SxfvZi055LvmU1bWwv7poroWoBKxYiMRkQBlm2wLYmtNEJpgiAg9ANMqNBBhPYDUAal686LDJUmwjS3dlhLFi2mElTvwbL+/vS1a58AeK3t3X8r"
+    .. "gC+u+G5I4xPAJcZEfxD65u/27j6wvDRVY/fOg2bf7sPadh1ZKVfEv3/9uyxbsRiJzdjIOPGEx95d+yhNFgl0yM7nnqPS3Yrq6CJejTAiADuGtCyEbSNcG8uxqNTKOK1ZFq5die2X0TGBdEAmbEqT05SnK8SzbdgR"
+    .. "OMaqN1mqCG0ilAoJo4ggDPHDgGrg40cBWiujjdFGRdJCSuEleW7X7m2F0dHPnXvJhdeeAJz+bYP33wLgi6RxZvPWtddfv+1n27ftfPfqlad+LN/SurJYLFoDAwNUqxPRxERBJpJxGQYRzz23lVQyQf+hIRYsmseq"
+    .. "dYupTVcw+4eAfqKeDpLJJHHbxZUerhXDwcMNHaxkgiWXvp7Dg4dQlSq5ZJZaqUqtMIU+eojxrU+Tp0rZieN5HilL4jo2yraJVAS+wsYCbVBhqKNQaa2MrS3LUghsrbfayeRXNz/xwDXnXvJAcNVVV8l/+Id/QAih"
+    .. "+G+6BP8DV0OtKgBzvbHef/PHXjc+NvFnw8PDry8VS974xBgLFvaZIAjV4OAxkUqlZaVaEz2dXVx46QU8MznMA5v3grGw0nlaFi+lub0dO+aQbcmQSiex4nFSuSTe0DA/+9Ln6VIVVs2dQyAspAMtTa30LFtOPJtB"
+    .. "qJBIacJayMHhUfaNT1K1HOM6cR1WfXN0ZMjSCCEjxfTYpF/0i3f5tdLX1ZMPbQCUEIKf/OQn1n+HxP1OANgAUdxw5Q3yyhue/9DLF56xuFrxL1eq8p4zzz575Z49+xHCQgiL0bFRFVWnDV2zRPXU9dJuaxP22Cjh"
+    .. "wYPUygVS2TzpnnZyuSxeUwvdC3sRI0Psu+cO1Ngx2pua6O7opmP2LJYvX86yJUuYM3s2yVgMTIBSGK2kDlVgKpWKKFZ9q1KpMHB0gFsefpKHdu3bOk30n361dOvgrTfuOqF8z6LupJj/iXP8HwPwxHt4xzveIZcu"
+    .. "XWr+8R//UQNcddVV8vD+kdOffHLTJU35lkuqldoqpXV8cniE3EUXUFlzBuXxGq6ldCymTWKiRGHgiFDjeymNTEg7FidjKZJBSN5zaGrJ4cRdstkcbR1teu68eSxfscIsW76CZCwhTk4p6irIzdT70e8GnmiUOsBV"
+    .. "V0l27BD/k8D9LgH4Am72PM6TD/LCeGnZsktmqaD8usro2Mr8Gy85o7DklPnBFK1W0iOZjZNKJkjHE6TCEQg10dHD7L/zOjrTaZLxFIFSxF2PlJcklcnQ0pRhQV8PnW3NZFJpFFUCX416iey+RDb9eDUItubSHRtW"
+    .. "rFjR/4K7O+88mwfP1/CP+nflwH7XAHyBVI6MjIgHH3zwl/JkPVd9p6kSmoWJTK63ScpVcSeaK7P5eTlPmKbW5sWTj92ZHrn9F6Y93yaqtRLCtYzWWgTlyrQywa55s1pEU9Y7oKvTBz1pbZ4ujx767k3P7QEmXqzm"
+    .. "AeuGG24wrwXx/Nu4/l8pdKBa4Eeu0QAAAABJRU5ErkJggg=="
+
+local function Base64Decode(data)
+    local charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    data = string.gsub(data, "[^" .. charset .. "=]", "")
+    return (data:gsub(".", function(x)
+        if x == "=" then return "" end
+        local r, f = "", (charset:find(x, 1, true) - 1)
+        for i = 6, 1, -1 do r = r .. (f % 2 ^ i - f % 2 ^ (i - 1) > 0 and "1" or "0") end
+        return r
+    end):gsub("%d%d%d?%d?%d?%d?%d?%d?", function(x)
+        if #x ~= 8 then return "" end
+        local c = 0
+        for i = 1, 8 do if x:sub(i, i) == "1" then c = c + 2 ^ (8 - i) end end
+        return string.char(c)
+    end))
+end
+
+local function GetLogoImage()
+    if type(LOGO_ASSET_ID) == "string" and LOGO_ASSET_ID ~= "" then
+        return LOGO_ASSET_ID
+    end
+    local getAsset = (type(getcustomasset) == "function" and getcustomasset)
+        or (type(getsynasset) == "function" and getsynasset)
+    if getAsset and type(writefile) == "function" then
+        pcall(function()
+            local needWrite = true
+            if type(isfile) == "function" then needWrite = not isfile(LOGO_FILE) end
+            if needWrite then writefile(LOGO_FILE, Base64Decode(LOGO_B64)) end
+        end)
+        local ok, path = pcall(getAsset, LOGO_FILE)
+        if ok and type(path) == "string" and path ~= "" then return path end
+    end
+    return nil
+end
+
+local LOGO_IMAGE = GetLogoImage()
+
+
+local function getGuiParent()
+    if gethui then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok, gui = pcall(function() return CoreGui end)
+    if ok and gui then return gui end
+    return LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChild("PlayerGui")
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "IdenticalHeavyweightFishing"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = getGuiParent()
+table.insert(cleanUpInstances, screenGui)
+
+local function UnloadScript()
+    isRunning = false
+    for _, conn in ipairs(activeConnections) do pcall(function() conn:Disconnect() end) end
+    table.clear(activeConnections)
+    
+    for _, inst in ipairs(cleanUpInstances) do
+        pcall(function()
+            if inst and inst.Parent then inst:Destroy() end
+        end)
+    end
+    table.clear(cleanUpInstances)
+    
+    pcall(function()
+        local leftover = Workspace:FindFirstChild("IdenticalESP")
+        if leftover then leftover:Destroy() end
+    end)
+
+    pcall(function()
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = 16 end
+        Lighting.FogEnd = 100000
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.Ambient = Color3.fromRGB(70, 70, 70)
+        Lighting.OutdoorAmbient = Color3.fromRGB(70, 70, 70)
+        Lighting.GlobalShadows = true
+    end)
+    
+    if getgenv then getgenv().IdenticalHeavyweightFishingUnload = nil end
+end
+
+if getgenv then getgenv().IdenticalHeavyweightFishingUnload = UnloadScript end
+
+local notifContainer = Instance.new("Frame")
+notifContainer.Name = "Notifications"
+notifContainer.Size = UDim2.new(0, 300, 1, -40)
+notifContainer.Position = UDim2.new(1, -315, 0, 20)
+notifContainer.BackgroundTransparency = 1
+notifContainer.ZIndex = 1000
+notifContainer.Parent = screenGui
+table.insert(cleanUpInstances, notifContainer)
+
+local notifLayout = Instance.new("UIListLayout")
+notifLayout.SortOrder = Enum.SortOrder.LayoutOrder
+notifLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+notifLayout.Padding = UDim.new(0, 8)
+notifLayout.Parent = notifContainer
+
+local function ShowNotification(title, text, notifType, duration)
+    if not isRunning then return end
+    duration = duration or 3.5
+    local accentColor = Colors.CyanAccent
+    if notifType == "SUCCESS" then accentColor = Colors.AccentGreen
+    elseif notifType == "WARN" then accentColor = Colors.AccentYellow
+    elseif notifType == "ERROR" then accentColor = Colors.AccentRed end
+
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, 60)
+    card.BackgroundColor3 = Colors.Background
+    card.BackgroundTransparency = 0.05
+    card.BorderSizePixel = 0
+    card.ClipsDescendants = true
+    card.Parent = notifContainer
+
+    local stroke = Instance.new("UIStroke"); stroke.Color = accentColor; stroke.Thickness = 1.2; stroke.Parent = card
+    local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 6); corner.Parent = card
+    local topBar = Instance.new("Frame"); topBar.Size = UDim2.new(1, 0, 0, 20); topBar.BackgroundTransparency = 1; topBar.Position = UDim2.new(0, 10, 0, 6); topBar.Parent = card
+    local tLabel = Instance.new("TextLabel"); tLabel.Size = UDim2.new(1, -20, 1, 0); tLabel.BackgroundTransparency = 1; tLabel.Font = Enum.Font.GothamBold; tLabel.Text = title; tLabel.TextColor3 = Colors.CyanPrimary; tLabel.TextSize = 13; tLabel.TextXAlignment = Enum.TextXAlignment.Left; tLabel.Parent = topBar
+    local mLabel = Instance.new("TextLabel"); mLabel.Size = UDim2.new(1, -20, 0, 26); mLabel.Position = UDim2.new(0, 10, 0, 26); mLabel.BackgroundTransparency = 1; mLabel.Font = Enum.Font.Gotham; mLabel.Text = text; mLabel.TextColor3 = Colors.TextSubtle; mLabel.TextSize = 11; mLabel.TextXAlignment = Enum.TextXAlignment.Left; mLabel.TextWrapped = true; mLabel.Parent = card
+
+    task.delay(duration, function()
+        if card and card.Parent then
+            TweenService:Create(card, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                BackgroundTransparency = 1, Position = card.Position + UDim2.new(1, 20, 0, 0)
+            }):Play()
+            task.wait(0.35); card:Destroy()
+        end
+    end)
+end
+
+local ToggleUiVisibility
+
+local floatingCrescent = Instance.new("ImageButton")
+floatingCrescent.Name = "FloatingCrescent"
+floatingCrescent.Size = UDim2.new(0, 44, 0, 44)
+floatingCrescent.Position = UDim2.new(0, 20, 0, 20)
+floatingCrescent.BackgroundColor3 = Colors.Background
+floatingCrescent.BorderSizePixel = 0
+floatingCrescent.Visible = false
+floatingCrescent.ZIndex = 1000
+floatingCrescent.Parent = screenGui
+table.insert(cleanUpInstances, floatingCrescent)
+
+do
+    local fcCorner = Instance.new("UICorner"); fcCorner.CornerRadius = UDim.new(1, 0); fcCorner.Parent = floatingCrescent
+    local fcStroke = Instance.new("UIStroke"); fcStroke.Color = Colors.CyanAccent; fcStroke.Thickness = 1.5; fcStroke.Parent = floatingCrescent
+    local fcIcon, fcCutout = nil, nil
+    if LOGO_IMAGE then
+        fcIcon = Instance.new("ImageLabel")
+        fcIcon.Size = UDim2.new(1, -8, 1, -8); fcIcon.Position = UDim2.new(0, 4, 0, 4)
+        fcIcon.BackgroundTransparency = 1; fcIcon.BorderSizePixel = 0
+        fcIcon.Image = LOGO_IMAGE; fcIcon.Parent = floatingCrescent
+        Instance.new("UICorner", fcIcon).CornerRadius = UDim.new(1, 0)
+    else
+        local fcIconContainer = Instance.new("Frame"); fcIconContainer.Size = UDim2.new(0, 24, 0, 24); fcIconContainer.Position = UDim2.new(0.5, -12, 0.5, -12); fcIconContainer.BackgroundTransparency = 1; fcIconContainer.ClipsDescendants = true; fcIconContainer.Parent = floatingCrescent
+        local fcOuter = Instance.new("Frame"); fcOuter.Size = UDim2.new(0, 24, 0, 24); fcOuter.BackgroundColor3 = Colors.CyanPrimary; fcOuter.BorderSizePixel = 0; fcOuter.Parent = fcIconContainer
+        local fcOC = Instance.new("UICorner"); fcOC.CornerRadius = UDim.new(1, 0); fcOC.Parent = fcOuter
+        fcCutout = Instance.new("Frame"); fcCutout.Size = UDim2.new(0, 20, 0, 20); fcCutout.Position = UDim2.new(0, 6, 0, -3); fcCutout.BackgroundColor3 = Colors.Background; fcCutout.BorderSizePixel = 0; fcCutout.Parent = fcOuter
+        local fcCC = Instance.new("UICorner"); fcCC.CornerRadius = UDim.new(1, 0); fcCC.Parent = fcCutout
+    end
+
+    local fcDragging, fcDragInput, fcDragStart, fcStartPos = false, nil, nil, nil
+    floatingCrescent.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            fcDragging = true; fcDragStart = input.Position; fcStartPos = floatingCrescent.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then fcDragging = false end end)
+        end
+    end)
+    floatingCrescent.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement then fcDragInput = input end end)
+    table.insert(activeConnections, UserInputService.InputChanged:Connect(function(input)
+        if input == fcDragInput and fcDragging then
+            local delta = input.Position - fcDragStart
+            floatingCrescent.Position = UDim2.new(fcStartPos.X.Scale, fcStartPos.X.Offset + delta.X, fcStartPos.Y.Scale, fcStartPos.Y.Offset + delta.Y)
+        end
+    end))
+    floatingCrescent.MouseEnter:Connect(function()
+        TweenService:Create(floatingCrescent, TweenInfo.new(0.15), {BackgroundColor3 = Colors.CyanDark}):Play()
+        TweenService:Create(fcStroke, TweenInfo.new(0.15), {Color = Colors.CyanGlow}):Play()
+        if fcCutout then fcCutout.BackgroundColor3 = Colors.CyanDark end
+    end)
+    floatingCrescent.MouseLeave:Connect(function()
+        TweenService:Create(floatingCrescent, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Background}):Play()
+        TweenService:Create(fcStroke, TweenInfo.new(0.15), {Color = Colors.CyanAccent}):Play()
+        if fcCutout then fcCutout.BackgroundColor3 = Colors.Background end
+    end)
+    floatingCrescent.MouseButton1Click:Connect(function() if ToggleUiVisibility then ToggleUiVisibility() end end)
+end
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 700, 0, 480)
+mainFrame.Position = UDim2.new(0.5, -350, 0.5, -240)
+mainFrame.BackgroundColor3 = Colors.Background
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+table.insert(cleanUpInstances, mainFrame)
+
+do
+    local mc = Instance.new("UICorner"); mc.CornerRadius = UDim.new(0, 8); mc.Parent = mainFrame
+    local ms = Instance.new("UIStroke"); ms.Color = Colors.BorderCyan; ms.Thickness = 1.5; ms.Parent = mainFrame
+end
+
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 38)
+titleBar.BackgroundColor3 = Colors.SidebarBg
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+do
+    local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(0, 8); tc.Parent = titleBar
+    local tbf = Instance.new("Frame"); tbf.Size = UDim2.new(1, 0, 0, 10); tbf.Position = UDim2.new(0, 0, 1, -10); tbf.BackgroundColor3 = Colors.SidebarBg; tbf.BorderSizePixel = 0; tbf.Parent = titleBar
+    local tdiv = Instance.new("Frame"); tdiv.Size = UDim2.new(1, 0, 0, 1); tdiv.Position = UDim2.new(0, 0, 1, -1); tdiv.BackgroundColor3 = Colors.Divider; tdiv.BorderSizePixel = 0; tdiv.Parent = titleBar
+end
+
+do
+    local brandIcon
+    if LOGO_IMAGE then
+        brandIcon = Instance.new("ImageLabel")
+        brandIcon.Size = UDim2.new(0, 22, 0, 22); brandIcon.Position = UDim2.new(0, 11, 0.5, -11)
+        brandIcon.BackgroundTransparency = 1; brandIcon.BorderSizePixel = 0
+        brandIcon.Image = LOGO_IMAGE; brandIcon.Parent = titleBar
+    else
+        brandIcon = Instance.new("Frame")
+        brandIcon.Size = UDim2.new(0, 22, 0, 22); brandIcon.Position = UDim2.new(0, 11, 0.5, -11)
+        brandIcon.BackgroundColor3 = Colors.CyanAccent; brandIcon.BorderSizePixel = 0; brandIcon.ClipsDescendants = true; brandIcon.Parent = titleBar
+        local cut = Instance.new("Frame"); cut.Size = UDim2.new(0, 17, 0, 17); cut.Position = UDim2.new(0, 6, 0, -2); cut.BackgroundColor3 = Colors.SidebarBg; cut.BorderSizePixel = 0; cut.Parent = brandIcon
+        Instance.new("UICorner", cut).CornerRadius = UDim.new(1, 0)
+    end
+    Instance.new("UICorner", brandIcon).CornerRadius = UDim.new(1, 0)
+    local brandStroke = Instance.new("UIStroke"); brandStroke.Color = Colors.CyanAccent; brandStroke.Thickness = 1.2; brandStroke.Parent = brandIcon
+end
+
+local brandTitle = Instance.new("TextLabel")
+brandTitle.Size = UDim2.new(0, 200, 1, 0); brandTitle.Position = UDim2.new(0, 36, 0, 0)
+brandTitle.BackgroundTransparency = 1; brandTitle.Font = Enum.Font.GothamBold
+brandTitle.Text = "HoangWER FISHING"; brandTitle.TextColor3 = Colors.CyanPrimary
+brandTitle.TextSize = 13; brandTitle.TextXAlignment = Enum.TextXAlignment.Left
+brandTitle.Parent = titleBar
+
+local gameSubtitle = Instance.new("TextLabel")
+gameSubtitle.Size = UDim2.new(0, 200, 1, 0); gameSubtitle.Position = UDim2.new(0, 240, 0, 0)
+gameSubtitle.BackgroundTransparency = 1; gameSubtitle.Font = Enum.Font.Gotham
+gameSubtitle.Text = "CYAN TEAL | V2.0"; gameSubtitle.TextColor3 = Colors.CyanMuted
+gameSubtitle.TextSize = 10; gameSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+gameSubtitle.Parent = titleBar
+
+local winControls = Instance.new("Frame"); winControls.Size = UDim2.new(0, 60, 1, 0); winControls.Position = UDim2.new(1, -65, 0, 0); winControls.BackgroundTransparency = 1; winControls.Parent = titleBar
+local minBtn = Instance.new("TextButton"); minBtn.Size = UDim2.new(0, 24, 0, 24); minBtn.Position = UDim2.new(0, 4, 0.5, -12); minBtn.BackgroundColor3 = Colors.ControlBg; minBtn.Font = Enum.Font.GothamBold; minBtn.Text = "[-]"; minBtn.TextColor3 = Colors.CyanPrimary; minBtn.TextSize = 11; minBtn.BorderSizePixel = 0; minBtn.Parent = winControls
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 4)
+local closeBtn = Instance.new("TextButton"); closeBtn.Size = UDim2.new(0, 24, 0, 24); closeBtn.Position = UDim2.new(0, 32, 0.5, -12); closeBtn.BackgroundColor3 = Colors.ControlBg; closeBtn.Font = Enum.Font.GothamBold; closeBtn.Text = "[X]"; closeBtn.TextColor3 = Colors.AccentRed; closeBtn.TextSize = 11; closeBtn.BorderSizePixel = 0; closeBtn.Parent = winControls
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+
+do
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; dragStart = input.Position; startPos = mainFrame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    titleBar.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end end)
+    table.insert(activeConnections, UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end))
+end
+
+local bodyFrame = Instance.new("Frame"); bodyFrame.Name = "Body"; bodyFrame.Size = UDim2.new(1, 0, 1, -62); bodyFrame.Position = UDim2.new(0, 0, 0, 38); bodyFrame.BackgroundTransparency = 1; bodyFrame.Parent = mainFrame
+
+local sidebar = Instance.new("Frame"); sidebar.Name = "Sidebar"; sidebar.Size = UDim2.new(0, 140, 1, 0); sidebar.BackgroundColor3 = Colors.SidebarBg; sidebar.BorderSizePixel = 0; sidebar.Parent = bodyFrame
+do local d = Instance.new("Frame"); d.Size = UDim2.new(0, 1, 1, 0); d.Position = UDim2.new(1, -1, 0, 0); d.BackgroundColor3 = Colors.Divider; d.BorderSizePixel = 0; d.Parent = sidebar end
+
+local searchBox = Instance.new("TextBox")
+searchBox.Name = "SearchBar"; searchBox.Size = UDim2.new(1, -16, 0, 26); searchBox.Position = UDim2.new(0, 8, 0, 8)
+searchBox.BackgroundColor3 = Colors.InputBg; searchBox.Font = Enum.Font.Gotham; searchBox.PlaceholderText = "Tìm kiếm..."
+searchBox.PlaceholderColor3 = Colors.TextMuted; searchBox.Text = ""; searchBox.TextColor3 = Colors.TextWhite
+searchBox.TextSize = 11; searchBox.TextXAlignment = Enum.TextXAlignment.Left; searchBox.BorderSizePixel = 0; searchBox.ClearTextOnFocus = false; searchBox.Parent = sidebar
+do local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 8); p.Parent = searchBox end
+Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 4)
+
+local rowSearchIndex = {}
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    local q = searchBox.Text:lower()
+    for _, item in ipairs(rowSearchIndex) do
+        if q == "" or item.query:find(q, 1, true) then
+            item.frame.Visible = true
+        else
+            item.frame.Visible = false
+        end
+    end
+end)
+
+local navList = Instance.new("ScrollingFrame"); navList.Name = "NavList"; navList.Size = UDim2.new(1, 0, 1, -44); navList.Position = UDim2.new(0, 0, 0, 42); navList.BackgroundTransparency = 1; navList.BorderSizePixel = 0; navList.ScrollBarThickness = 2; navList.ScrollBarImageColor3 = Colors.BorderSubtle; navList.CanvasSize = UDim2.new(0, 0, 0, 0); navList.AutomaticCanvasSize = Enum.AutomaticSize.Y; navList.Parent = sidebar
+do
+    local nl = Instance.new("UIListLayout"); nl.SortOrder = Enum.SortOrder.LayoutOrder; nl.Padding = UDim.new(0, 4); nl.Parent = navList
+    local np = Instance.new("UIPadding"); np.PaddingTop = UDim.new(0, 6); np.PaddingLeft = UDim.new(0, 8); np.PaddingRight = UDim.new(0, 8); np.Parent = navList
+end
+
+local contentArea = Instance.new("Frame"); contentArea.Name = "ContentArea"; contentArea.Size = UDim2.new(1, -140, 1, 0); contentArea.Position = UDim2.new(0, 140, 0, 0); contentArea.BackgroundTransparency = 1; contentArea.Parent = bodyFrame
+
+local tabFrames = {}
+local tabButtons = {}
+
+local function SwitchTab(tabName)
+    for name, frame in pairs(tabFrames) do frame.Visible = (name == tabName) end
+    for name, btn in pairs(tabButtons) do
+        if name == tabName then
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.CyanDark, TextColor3 = Colors.TextWhite}):Play()
+            local pill = btn:FindFirstChild("ActivePill"); if pill then pill.Visible = true end
+        else
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.SidebarBg, TextColor3 = Colors.TextSubtle}):Play()
+            local pill = btn:FindFirstChild("ActivePill"); if pill then pill.Visible = false end
+        end
+    end
+end
+
+local function CreateTab(name)
+    local btn = Instance.new("TextButton"); btn.Name = "TabBtn_" .. name; btn.Size = UDim2.new(1, 0, 0, 30); btn.BackgroundColor3 = Colors.SidebarBg; btn.Font = Enum.Font.GothamBold; btn.Text = name; btn.TextColor3 = Colors.TextSubtle; btn.TextSize = 12; btn.TextXAlignment = Enum.TextXAlignment.Left; btn.BorderSizePixel = 0; btn.Parent = navList
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    do local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 12); p.Parent = btn end
+    local pill = Instance.new("Frame"); pill.Name = "ActivePill"; pill.Size = UDim2.new(0, 3, 0, 16); pill.Position = UDim2.new(0, -9, 0.5, -8); pill.BackgroundColor3 = Colors.CyanAccent; pill.BorderSizePixel = 0; pill.Visible = false; pill.Parent = btn
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(0, 2)
+    btn.MouseButton1Click:Connect(function() SwitchTab(name) end)
+
+    local page = Instance.new("ScrollingFrame"); page.Name = "TabPage_" .. name; page.Size = UDim2.new(1, 0, 1, 0); page.BackgroundTransparency = 1; page.BorderSizePixel = 0; page.ScrollBarThickness = 3; page.ScrollBarImageColor3 = Colors.BorderCyan; page.CanvasSize = UDim2.new(0, 0, 0, 0); page.AutomaticCanvasSize = Enum.AutomaticSize.Y; page.Visible = false; page.Parent = contentArea
+    do
+        local pl = Instance.new("UIListLayout"); pl.SortOrder = Enum.SortOrder.LayoutOrder; pl.Padding = UDim.new(0, 10); pl.Parent = page
+        local pp = Instance.new("UIPadding"); pp.PaddingTop = UDim.new(0, 12); pp.PaddingBottom = UDim.new(0, 16); pp.PaddingLeft = UDim.new(0, 14); pp.PaddingRight = UDim.new(0, 14); pp.Parent = page
+    end
+    tabFrames[name] = page; tabButtons[name] = btn
+    return page
+end
+
+local footerBar = Instance.new("Frame"); footerBar.Name = "FooterBar"; footerBar.Size = UDim2.new(1, 0, 0, 24); footerBar.Position = UDim2.new(0, 0, 1, -24); footerBar.BackgroundColor3 = Colors.SidebarBg; footerBar.BorderSizePixel = 0; footerBar.Parent = mainFrame
+Instance.new("UICorner", footerBar).CornerRadius = UDim.new(0, 8)
+do
+    local tf = Instance.new("Frame"); tf.Size = UDim2.new(1, 0, 0, 10); tf.BackgroundColor3 = Colors.SidebarBg; tf.BorderSizePixel = 0; tf.Parent = footerBar
+    local fd = Instance.new("Frame"); fd.Size = UDim2.new(1, 0, 0, 1); fd.BackgroundColor3 = Colors.Divider; fd.BorderSizePixel = 0; fd.Parent = footerBar
+end
+local footerBrand = Instance.new("TextLabel"); footerBrand.Size = UDim2.new(0, 260, 1, 0); footerBrand.Position = UDim2.new(0, 12, 0, 0); footerBrand.BackgroundTransparency = 1; footerBrand.Font = Enum.Font.Gotham; footerBrand.Text = "HoangWER FISHING | CYAN TEAL V2.0"; footerBrand.TextColor3 = Colors.TextMuted; footerBrand.TextSize = 10; footerBrand.TextXAlignment = Enum.TextXAlignment.Left; footerBrand.Parent = footerBar
+local footerKey = Instance.new("TextLabel"); footerKey.Size = UDim2.new(0, 280, 1, 0); footerKey.Position = UDim2.new(1, -292, 0, 0); footerKey.BackgroundTransparency = 1; footerKey.Font = Enum.Font.Gotham; footerKey.Text = "[R-CTRL] Menu | [END] Dừng"; footerKey.TextColor3 = Colors.TextMuted; footerKey.TextSize = 10; footerKey.TextXAlignment = Enum.TextXAlignment.Right; footerKey.Parent = footerBar
+
+ToggleUiVisibility = function()
+    mainFrame.Visible = not mainFrame.Visible
+    floatingCrescent.Visible = not mainFrame.Visible
+end
+
+minBtn.MouseButton1Click:Connect(ToggleUiVisibility)
+closeBtn.MouseButton1Click:Connect(UnloadScript)
+
+local function createCategoryHeader(parent, text)
+    local hdr = Instance.new("Frame"); hdr.Size = UDim2.new(1, 0, 0, 22); hdr.BackgroundTransparency = 1; hdr.Parent = parent
+    local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, 0, 1, 0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamBold; lbl.Text = string.upper(text); lbl.TextColor3 = Colors.CyanPrimary; lbl.TextSize = 11; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Parent = hdr
+    return hdr
+end
+
+local function createCardGroup(parent)
+    local group = Instance.new("Frame"); group.Size = UDim2.new(1, 0, 0, 0); group.AutomaticSize = Enum.AutomaticSize.Y; group.BackgroundColor3 = Colors.RowNormal; group.BorderSizePixel = 0; group.Parent = parent
+    local s = Instance.new("UIStroke"); s.Color = Colors.BorderSubtle; s.Thickness = 1; s.Parent = group
+    Instance.new("UICorner", group).CornerRadius = UDim.new(0, 6)
+    local l = Instance.new("UIListLayout"); l.SortOrder = Enum.SortOrder.LayoutOrder; l.Padding = UDim.new(0, 0); l.Parent = group
+    return group
+end
+
+local function createBaseRow(parent, labelText, descText, indexSearch)
+    local row = Instance.new("Frame"); row.Size = UDim2.new(1, 0, 0, 42); row.BackgroundColor3 = Colors.RowNormal; row.BorderSizePixel = 0; row.Parent = parent
+    local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10); pad.Parent = row
+    local tf = Instance.new("Frame"); tf.Size = UDim2.new(1, -190, 1, 0); tf.BackgroundTransparency = 1; tf.Parent = row
+    local tl = Instance.new("TextLabel"); tl.Size = UDim2.new(1, 0, 0, 18); tl.Position = UDim2.new(0, 0, 0, 4); tl.BackgroundTransparency = 1; tl.Font = Enum.Font.GothamBold; tl.Text = labelText; tl.TextColor3 = Colors.TextWhite; tl.TextSize = 12; tl.TextXAlignment = Enum.TextXAlignment.Left; tl.Parent = tf
+    local dl = Instance.new("TextLabel"); dl.Size = UDim2.new(1, 0, 0, 14); dl.Position = UDim2.new(0, 0, 0, 22); dl.BackgroundTransparency = 1; dl.Font = Enum.Font.Gotham; dl.Text = descText or ""; dl.TextColor3 = Colors.TextMuted; dl.TextSize = 10; dl.TextXAlignment = Enum.TextXAlignment.Left; dl.Parent = tf
+    row.MouseEnter:Connect(function() TweenService:Create(row, TweenInfo.new(0.15), {BackgroundColor3 = Colors.RowHover}):Play() end)
+    row.MouseLeave:Connect(function() TweenService:Create(row, TweenInfo.new(0.15), {BackgroundColor3 = Colors.RowNormal}):Play() end)
+    if indexSearch ~= false then
+        table.insert(rowSearchIndex, {frame = row, query = (labelText .. " " .. (descText or "")):lower()})
+    end
+    return row
+end
+
+local function createToggleRow(parent, labelText, descText, initialVal, callback, indexSearch)
+    if type(initialVal) == "function" then
+        indexSearch = callback
+        callback = initialVal
+        initialVal = false
+    end
+    local row = createBaseRow(parent, labelText, descText, indexSearch)
+    local state = initialVal or false
+    local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0, 40, 0, 20); btn.Position = UDim2.new(1, -40, 0.5, -10); btn.BackgroundColor3 = state and Colors.CyanAccent or Colors.ControlBg; btn.Text = ""; btn.BorderSizePixel = 0; btn.Parent = row
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
+    local knob = Instance.new("Frame"); knob.Size = UDim2.new(0, 14, 0, 14); knob.Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7); knob.BackgroundColor3 = Colors.TextWhite; knob.BorderSizePixel = 0; knob.Parent = btn
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+    local function updateVisuals()
+        TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = state and Colors.CyanAccent or Colors.ControlBg}):Play()
+        TweenService:Create(knob, TweenInfo.new(0.15), {Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)}):Play()
+    end
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        updateVisuals()
+        if type(callback) == "function" then callback(state) end
+    end)
+    return {frame = row, Set = function(val) state = val; updateVisuals() end, Get = function() return state end}
+end
+
+local function createSliderRow(parent, labelText, descText, minVal, maxVal, initialVal, isFloat, suffix, callback, indexSearch)
+    local row = createBaseRow(parent, labelText, descText, indexSearch)
+    local currentVal = initialVal or minVal; suffix = suffix or ""
+    local container = Instance.new("Frame"); container.Size = UDim2.new(0, 180, 0, 24); container.Position = UDim2.new(1, -180, 0.5, -12); container.BackgroundTransparency = 1; container.Parent = row
+    local valLabel = Instance.new("TextLabel"); valLabel.Size = UDim2.new(0, 68, 1, 0); valLabel.Position = UDim2.new(1, -68, 0, 0); valLabel.BackgroundTransparency = 1; valLabel.Font = Enum.Font.GothamBold; valLabel.TextColor3 = Colors.CyanPrimary; valLabel.TextSize = 11; valLabel.TextXAlignment = Enum.TextXAlignment.Right; valLabel.Parent = container
+    valLabel.Text = isFloat and string.format("%.2f", currentVal)..suffix or tostring(math.floor(currentVal))..suffix
+    local track = Instance.new("Frame"); track.Size = UDim2.new(1, -74, 0, 6); track.Position = UDim2.new(0, 0, 0.5, -3); track.BackgroundColor3 = Colors.ControlBg; track.BorderSizePixel = 0; track.Parent = container
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+    local pct = math.clamp((currentVal - minVal) / (maxVal - minVal), 0, 1)
+    local fill = Instance.new("Frame"); fill.Size = UDim2.new(pct, 0, 1, 0); fill.BackgroundColor3 = Colors.CyanAccent; fill.BorderSizePixel = 0; fill.Parent = track
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    local sliding = false
+    local function updateFromX(x)
+        local rel = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        local val = minVal + (maxVal - minVal) * rel
+        if not isFloat then val = math.floor(val + 0.5) end
+        currentVal = val; fill.Size = UDim2.new(rel, 0, 1, 0)
+        valLabel.Text = isFloat and string.format("%.2f", val)..suffix or tostring(val)..suffix
+        if type(callback) == "function" then callback(val) end
+    end
+    track.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = true; updateFromX(input.Position.X) end end)
+    UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end end)
+    table.insert(activeConnections, UserInputService.InputChanged:Connect(function(input) if sliding and input.UserInputType == Enum.UserInputType.MouseMovement then updateFromX(input.Position.X) end end))
+    return {
+        frame = row,
+        Set = function(val)
+            currentVal = math.clamp(val, minVal, maxVal)
+            local p2 = (currentVal - minVal) / (maxVal - minVal)
+            fill.Size = UDim2.new(p2, 0, 1, 0)
+            valLabel.Text = isFloat and string.format("%.2f", currentVal)..suffix or tostring(math.floor(currentVal))..suffix
+        end
+    }
+end
+
+local function createDropdownRow(parent, labelText, descText, options, initialVal, callback, indexSearch)
+    if type(options) == "table" and type(initialVal) == "function" then
+        indexSearch = callback
+        callback = initialVal
+        initialVal = options[1]
+    end
+    local selected = initialVal or options[1]
+    local row = Instance.new("Frame"); row.Size = UDim2.new(1, 0, 0, 42); row.AutomaticSize = Enum.AutomaticSize.Y; row.BackgroundColor3 = Colors.RowNormal; row.BorderSizePixel = 0; row.ClipsDescendants = true; row.Parent = parent
+    local rl = Instance.new("UIListLayout"); rl.SortOrder = Enum.SortOrder.LayoutOrder; rl.Padding = UDim.new(0, 4); rl.Parent = row
+    local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 42); header.BackgroundTransparency = 1; header.Parent = row
+    local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10); pad.Parent = header
+    local tf = Instance.new("Frame"); tf.Size = UDim2.new(1, -145, 1, 0); tf.BackgroundTransparency = 1; tf.Parent = header
+    local tl = Instance.new("TextLabel"); tl.Size = UDim2.new(1, 0, 0, 18); tl.Position = UDim2.new(0, 0, 0, 4); tl.BackgroundTransparency = 1; tl.Font = Enum.Font.GothamBold; tl.Text = labelText; tl.TextColor3 = Colors.TextWhite; tl.TextSize = 12; tl.TextXAlignment = Enum.TextXAlignment.Left; tl.Parent = tf
+    local dl = Instance.new("TextLabel"); dl.Size = UDim2.new(1, 0, 0, 14); dl.Position = UDim2.new(0, 0, 0, 22); dl.BackgroundTransparency = 1; dl.Font = Enum.Font.Gotham; dl.Text = descText or ""; dl.TextColor3 = Colors.TextMuted; dl.TextSize = 10; dl.TextXAlignment = Enum.TextXAlignment.Left; dl.Parent = tf
+    local ddBtn = Instance.new("TextButton"); ddBtn.Size = UDim2.new(0, 130, 0, 24); ddBtn.Position = UDim2.new(1, -130, 0.5, -12); ddBtn.BackgroundColor3 = Colors.ControlBg; ddBtn.Font = Enum.Font.GothamBold; ddBtn.Text = tostring(selected) .. "  v"; ddBtn.TextColor3 = Colors.CyanPrimary; ddBtn.TextSize = 11; ddBtn.BorderSizePixel = 0; ddBtn.Parent = header
+    Instance.new("UICorner", ddBtn).CornerRadius = UDim.new(0, 4)
+    local optC = Instance.new("Frame"); optC.Size = UDim2.new(1, 0, 0, 0); optC.AutomaticSize = Enum.AutomaticSize.Y; optC.BackgroundTransparency = 1; optC.Visible = false; optC.Parent = row
+    do local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 10); p.PaddingRight = UDim.new(0, 10); p.PaddingBottom = UDim.new(0, 8); p.Parent = optC end
+    Instance.new("UIListLayout", optC).SortOrder = Enum.SortOrder.LayoutOrder
+    local optButtons = {}
+    local function populate(opts)
+        for _, c in ipairs(optC:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        table.clear(optButtons)
+        for _, opt in ipairs(opts) do
+            local ob = Instance.new("TextButton"); ob.Size = UDim2.new(1, 0, 0, 26); ob.BackgroundColor3 = (opt == selected) and Colors.DropdownSelected or Colors.InputBg; ob.Font = Enum.Font.Gotham; ob.Text = (opt == selected and "> " or "   ") .. tostring(opt); ob.TextColor3 = (opt == selected) and Colors.CyanPrimary or Colors.TextWhite; ob.TextSize = 11; ob.TextXAlignment = Enum.TextXAlignment.Left; ob.BorderSizePixel = 0; ob.Parent = optC
+            Instance.new("UICorner", ob).CornerRadius = UDim.new(0, 4)
+            do local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 10); p.Parent = ob end
+            optButtons[opt] = ob
+            ob.MouseEnter:Connect(function() if opt ~= selected then TweenService:Create(ob, TweenInfo.new(0.15), {BackgroundColor3 = Colors.RowHover}):Play() end end)
+            ob.MouseLeave:Connect(function() if opt ~= selected then TweenService:Create(ob, TweenInfo.new(0.15), {BackgroundColor3 = Colors.InputBg}):Play() end end)
+            ob.MouseButton1Click:Connect(function()
+                selected = opt; ddBtn.Text = tostring(opt) .. "  v"; optC.Visible = false
+                for oN, b in pairs(optButtons) do b.BackgroundColor3 = (oN == opt) and Colors.DropdownSelected or Colors.InputBg; b.TextColor3 = (oN == opt) and Colors.CyanPrimary or Colors.TextWhite; b.Text = (oN == opt and "> " or "   ") .. tostring(oN) end
+                if type(callback) == "function" then callback(opt) end
+            end)
+        end
+    end
+    populate(options)
+    ddBtn.MouseButton1Click:Connect(function() optC.Visible = not optC.Visible; ddBtn.Text = tostring(selected) .. (optC.Visible and "  ^" or "  v") end)
+    header.MouseEnter:Connect(function() TweenService:Create(row, TweenInfo.new(0.15), {BackgroundColor3 = Colors.RowHover}):Play() end)
+    header.MouseLeave:Connect(function() TweenService:Create(row, TweenInfo.new(0.15), {BackgroundColor3 = Colors.RowNormal}):Play() end)
+    if indexSearch ~= false then table.insert(rowSearchIndex, {frame = row, query = (labelText .. " " .. (descText or "")):lower()}) end
+    return {
+        frame = row,
+        Set = function(opt)
+            selected = opt; ddBtn.Text = tostring(opt) .. "  v"
+            for oN, b in pairs(optButtons) do b.BackgroundColor3 = (oN == opt) and Colors.DropdownSelected or Colors.InputBg; b.TextColor3 = (oN == opt) and Colors.CyanPrimary or Colors.TextWhite; b.Text = (oN == opt and "> " or "   ") .. tostring(oN) end
+        end,
+        Get = function() return selected end
+    }
+end
+
+local function createButtonRow(parent, labelText, descText, btnText, callback, indexSearch)
+    if type(descText) == "function" then
+        indexSearch = btnText
+        callback = descText
+        btnText = "Execute"
+        descText = ""
+    elseif type(btnText) == "function" then
+        indexSearch = callback
+        callback = btnText
+        btnText = descText
+        descText = ""
+    end
+    local row = createBaseRow(parent, labelText, descText, indexSearch)
+    local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0, 90, 0, 24); btn.Position = UDim2.new(1, -90, 0.5, -12); btn.BackgroundColor3 = Colors.ControlBg; btn.Font = Enum.Font.GothamBold; btn.Text = btnText or "Execute"; btn.TextColor3 = Colors.CyanPrimary; btn.TextSize = 11; btn.BorderSizePixel = 0; btn.Parent = row
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.CyanDark, TextColor3 = Colors.TextWhite}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.ControlBg, TextColor3 = Colors.CyanPrimary}):Play() end)
+    btn.MouseButton1Click:Connect(function()
+        if type(callback) == "function" then pcall(callback) end
+    end)
+    return btn
+end
+
+local function createInfoRow(parent, labelText, valueText, indexSearch)
+    local row = createBaseRow(parent, labelText, "", indexSearch)
+    local vl = Instance.new("TextLabel"); vl.Size = UDim2.new(0, 140, 1, 0); vl.Position = UDim2.new(1, -140, 0, 0); vl.BackgroundTransparency = 1; vl.Font = Enum.Font.GothamBold; vl.Text = valueText; vl.TextColor3 = Colors.CyanPrimary; vl.TextSize = 11; vl.TextXAlignment = Enum.TextXAlignment.Right; vl.Parent = row
+    return {frame = row, Set = function(nv) vl.Text = nv end}
+end
+
+local tabFishing   = CreateTab("Câu Cá")
+local tabBoss      = CreateTab("Boss")
+local tabGod       = CreateTab("Thần Linh")
+local tabQuests    = CreateTab("Nhiệm Vụ")
+local tabShop      = CreateTab("Shop & Chế Tạo")
+local tabTeleports = CreateTab("Dịch Chuyển")
+local tabVisuals   = CreateTab("Hiển Thị")
+local tabPlayer    = CreateTab("Di Chuyển")
+local tabProfiles  = CreateTab("Cấu Hình")
+
+SwitchTab("Câu Cá")
+
+local allRods = {
+    {name = "Wooden Rod", price = 0, power = 8, luck = 1},
+    {name = "Bamboo Rod", price = 100, power = 11, luck = 5},
+    {name = "Iron Hook Rod", price = 500, power = 13, luck = 10},
+    {name = "Steel Rod", price = 1000, power = 17, luck = 11},
+    {name = "Enchanted Steel Rod", price = 2000, power = 19, luck = 12},
+    {name = "Alloy Rod", price = 5000, power = 22, luck = 5},
+    {name = "Emerald Rod", price = 10000, power = 25, luck = 10},
+    {name = "Bloodfire Rod", price = 20000, power = 27, luck = 10},
+    {name = "Shadow Rod", price = 60000, power = 29, luck = 22},
+    {name = "Triple Steel Rod", price = 100000, power = 32, luck = 20},
+    {name = "Golden Rod", price = 200000, power = 35, luck = 22},
+    {name = "Grandmaster Steel Rod", price = 250000, power = 37, luck = 10},
+    {name = "Grandmaster Golden Rod", price = 1000000, power = 45, luck = 30},
+    {name = "Steel Spine Rod", price = 1500000, power = 48, luck = 20},
+    {name = "Inferno Rod", price = 1500000, power = 48, luck = 18},
+    {name = "Golden Spine Rod", price = 2000000, power = 51, luck = 21},
+    {name = "Platinum Spine Rod", price = 3000000, power = 54, luck = 25},
+    {name = "Diamond Spine Rod", price = 4000000, power = 56, luck = 25},
+    {name = "Gravisteel Rod", price = 5000000, power = 58, luck = 15},
+    {name = "Auric Gravity Rod", price = 6000000, power = 60, luck = 10},
+    {name = "Inferno Gravity Rod", price = 7000000, power = 62, luck = 20},
+    {name = "Cryo Gravity Rod", price = 8000000, power = 65, luck = 36},
+    {name = "Thunder Thorn Rod", price = 10000000, power = 67, luck = 30},
+    {name = "Starlight Rod", price = 60000000, power = 83, luck = 15},
+}
+
+createCategoryHeader(tabFishing, "TÀI KHOẢN & THÔNG SỐ CÂU CÁ")
+local statsCard = createCardGroup(tabFishing)
+local infoEquippedRod = createInfoRow(statsCard, "Cần Câu Đang Dùng", "Không có")
+local infoEquippedBait = createInfoRow(statsCard, "Mồi Đang Dùng", "Không có")
+local infoFishCaught = createInfoRow(statsCard, "Tổng Cá Đã Câu", "0")
+local infoCash = createInfoRow(statsCard, "Tiền Hiện Có", "$0")
+
+createCategoryHeader(tabFishing, "TỰ ĐỘNG CÂU CÁ CƠ BẢN")
+local fishCard = createCardGroup(tabFishing)
+
+createToggleRow(fishCard, "Tự Động Quăng Cần", "Tự động bắt đầu câu và quăng cần", Config.AutoCast, function(v) Config.AutoCast = v end)
+createSliderRow(fishCard, "Độ Trễ Quăng Cần", "Tần suất kiểm tra / quăng cần", 0.5, 5.0, Config.CastDelay, true, "s", function(v) Config.CastDelay = v end)
+createToggleRow(fishCard, "Ghim Thanh (Minigame)", "Tự căn giữa thanh và đảm bảo tiến trình bắt cá", Config.AnchorBar, function(v) Config.AnchorBar = v end)
+createToggleRow(fishCard, "Tự Dùng Kỹ Năng (Burst DPS)", "Dùng kỹ năng cần câu & minigame khi kéo cá", Config.AutoSkills, function(v) Config.AutoSkills = v end)
+
+createCategoryHeader(tabFishing, "TỰ ĐỘNG KỸ NĂNG NÂNG CAO (Z / X / C / V)")
+local skillCard = createCardGroup(tabFishing)
+createToggleRow(skillCard, "Tự Dùng TẤT CẢ Kỹ Năng (Z + X + C + V)", "Tự bấm lần lượt Z, X, C, V để câu cá", Config.AutoAllSkills, function(v) Config.AutoAllSkills = v end)
+createToggleRow(skillCard, "Dùng Kỹ Năng Z", "Bật / tắt tự dùng kỹ năng Z", Config.SkillZ, function(v) Config.SkillZ = v end)
+createToggleRow(skillCard, "Dùng Kỹ Năng X", "Bật / tắt tự dùng kỹ năng X", Config.SkillX, function(v) Config.SkillX = v end)
+createToggleRow(skillCard, "Dùng Kỹ Năng C", "Bật / tắt tự dùng kỹ năng C", Config.SkillC, function(v) Config.SkillC = v end)
+createToggleRow(skillCard, "Dùng Kỹ Năng V", "Bật / tắt tự dùng kỹ năng V", Config.SkillV, function(v) Config.SkillV = v end)
+createSliderRow(skillCard, "Độ Trễ Kỹ Năng", "Khoảng cách giữa các lần dùng kỹ năng", 0.05, 1.0, Config.SkillDelay, true, "s", function(v) Config.SkillDelay = v end)
+createButtonRow(skillCard, "Dùng Ngay Tất Cả Kỹ Năng", "Bấm Z, X, C, V một lần ngay bây giờ", "Dùng Ngay", function() UseAllSkills() end)
+createToggleRow(fishCard, "Tự Slam / Chí Mạng", "Tự bấm nút Slam khi được yêu cầu để gây sát thương lớn", Config.AutoSlam, function(v) Config.AutoSlam = v end)
+createToggleRow(fishCard, "Tự Sạc Độ Bền", "Tự sạc độ bền dây khi được yêu cầu", Config.AutoCharge, function(v) Config.AutoCharge = v end)
+
+createCategoryHeader(tabFishing, "TỰ TRANG BỊ THÔNG MINH")
+local equipCard = createCardGroup(tabFishing)
+createToggleRow(equipCard, "Tự Trang Bị Mồi Tốt Nhất", "Trang bị mồi may mắn cao nhất trong túi", Config.AutoEquipBestBait, function(v) Config.AutoEquipBestBait = v end)
+createToggleRow(equipCard, "Tự Trang Bị Cần Tốt Nhất", "Trang bị cần mạnh nhất mà bạn sở hữu", Config.AutoEquipBestRod, function(v) Config.AutoEquipBestRod = v end)
+createToggleRow(equipCard, "Tự Trang Bị Ngọc Tốt Nhất", "Trang bị ngọc tinh túy phẩm cấp tốt nhất", Config.AutoEquipBestOrb, function(v) Config.AutoEquipBestOrb = v end)
+
+local rodNameList = {}
+for _, r in ipairs(allRods) do table.insert(rodNameList, r.name) end
+local baitNameList = {"Basic Bait", "Crude Mash Bait", "Corrupted Essence Bait", "Elite Bait", "Ancestral Bait", "Nameless Bait"}
+
+createDropdownRow(equipCard, "Bộ 1: Cần Câu", "Cần câu cho bộ #1", rodNameList, Config.Loadout1_Rod, function(v) Config.Loadout1_Rod = v end)
+createDropdownRow(equipCard, "Bộ 1: Mồi", "Mồi cho bộ #1", baitNameList, Config.Loadout1_Bait, function(v) Config.Loadout1_Bait = v end)
+createButtonRow(equipCard, "Trang Bị Ngay Bộ 1", "Trang bị cần & mồi đã chọn cho bộ #1", "Bộ #1", function()
+    local pData = ReplicatedStorage:FindFirstChild("Data") and ReplicatedStorage.Data:FindFirstChild(LocalPlayer.UserId)
+    if pData then
+        local rFolder = pData.FishingRodInventory:FindFirstChild(Config.Loadout1_Rod)
+        local isOwned = rFolder and rFolder:FindFirstChild("Owned") and rFolder.Owned.Value == true
+        if isOwned then
+            if Events:FindFirstChild("EquipFishingRod") then Events.EquipFishingRod:InvokeServer(Config.Loadout1_Rod) end
+            ShowNotification("Bộ #1", "Đã trang bị cần: " .. Config.Loadout1_Rod, "SUCCESS")
+        else
+            ShowNotification("Bộ #1", "Bạn chưa sở hữu " .. Config.Loadout1_Rod .. "!", "WARN")
+        end
+        local bFolder = pData.Bait:FindFirstChild(Config.Loadout1_Bait)
+        if bFolder and bFolder.Value > 0 then
+            if Events:FindFirstChild("EquipBait") then Events.EquipBait:InvokeServer(Config.Loadout1_Bait) end
+            ShowNotification("Bộ #1", "Đã trang bị mồi: " .. Config.Loadout1_Bait, "SUCCESS")
+        else
+            ShowNotification("Bộ #1", "Bạn có 0 " .. Config.Loadout1_Bait .. " trong túi.", "WARN")
+        end
+    end
+end)
+
+createDropdownRow(equipCard, "Bộ 2: Cần Câu", "Cần câu cho bộ #2", rodNameList, Config.Loadout2_Rod, function(v) Config.Loadout2_Rod = v end)
+createDropdownRow(equipCard, "Bộ 2: Mồi", "Mồi cho bộ #2", baitNameList, Config.Loadout2_Bait, function(v) Config.Loadout2_Bait = v end)
+createButtonRow(equipCard, "Trang Bị Ngay Bộ 2", "Trang bị cần & mồi đã chọn cho bộ #2", "Bộ #2", function()
+    local pData = ReplicatedStorage:FindFirstChild("Data") and ReplicatedStorage.Data:FindFirstChild(LocalPlayer.UserId)
+    if pData then
+        local rFolder = pData.FishingRodInventory:FindFirstChild(Config.Loadout2_Rod)
+        local isOwned = rFolder and rFolder:FindFirstChild("Owned") and rFolder.Owned.Value == true
+        if isOwned then
+            if Events:FindFirstChild("EquipFishingRod") then Events.EquipFishingRod:InvokeServer(Config.Loadout2_Rod) end
+            ShowNotification("Bộ #2", "Đã trang bị cần: " .. Config.Loadout2_Rod, "SUCCESS")
+        else
+            ShowNotification("Bộ #2", "Bạn chưa sở hữu " .. Config.Loadout2_Rod .. "!", "WARN")
+        end
+        local bFolder = pData.Bait:FindFirstChild(Config.Loadout2_Bait)
+        if bFolder and bFolder.Value > 0 then
+            if Events:FindFirstChild("EquipBait") then Events.EquipBait:InvokeServer(Config.Loadout2_Bait) end
+            ShowNotification("Bộ #2", "Đã trang bị mồi: " .. Config.Loadout2_Bait, "SUCCESS")
+        else
+            ShowNotification("Bộ #2", "Bạn có 0 " .. Config.Loadout2_Bait .. " trong túi.", "WARN")
+        end
+    end
+end)
+
+createCategoryHeader(tabFishing, "KINH TẾ & BÁN CÁ")
+local sellCard = createCardGroup(tabFishing)
+createToggleRow(sellCard, "Tự Động Bán Cá", "Bán toàn bộ cá trong túi theo chu kỳ", Config.AutoSell, function(v) Config.AutoSell = v end)
+createSliderRow(sellCard, "Chu Kỳ Bán", "Tần suất bán cá", 10, 300, Config.SellInterval, false, "s", function(v) Config.SellInterval = v end)
+
+createButtonRow(sellCard, "Bán Ngay & Dịch Đến Nana", "Dịch chuyển tới Nana và bán túi đồ", "Bán Ngay", function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = CFrame.new(-203.5, 7.3, 107.1)
+        task.wait(0.3)
+        if Events and Events:FindFirstChild("SellFish") then
+            Events.SellFish:FireServer("All")
+            ShowNotification("Đã Bán Cá", "Đã bán hết cá cho Nana!", "SUCCESS")
+        end
+    end
+end)
+
+local fishList = {"Colossal Tigerfish", "Heavenpiercer Turtle", "Golden Guardian Fish", "Crimson Electric Eel", "Frost Kingfish", "Ascended Perch", "Primordial Kunfish Overlord", "Warbringer Shark", "Mountain Fish", "Tiger Mirefish", "Mirage Lanternfish", "Octoparasitic Fish"}
+createToggleRow(sellCard, "Tự Đánh Dấu Cá Yêu Thích", "Bảo vệ cá đã chọn khỏi bị bán", Config.AutoFavouriteFish, function(v) Config.AutoFavouriteFish = v end)
+createDropdownRow(sellCard, "Cá Cần Bảo Vệ", "Loại cá muốn bảo vệ", fishList, Config.FavouriteFishName, function(v) Config.FavouriteFishName = v end)
+createToggleRow(sellCard, "Farm Nguyên Liệu", "Không tự bán cá dùng để chế tạo", Config.MaterialFarming, function(v) Config.MaterialFarming = v end)
+
+createCategoryHeader(tabBoss, "NAMELESS OCTOPARASITE (BOSS ẨN)")
+local octoCard = createCardGroup(tabBoss)
+
+createToggleRow(octoCard, "Tự Động Minigame (Bot Nhịp)", "Bot đánh nhịp hoàn hảo 100%", Config.OctoAutoMinigame, function(v) Config.OctoAutoMinigame = v end)
+createButtonRow(octoCard, "Dịch Đến Octoparasite", "Dịch chuyển tới phao Boss Ẩn trên Biển", "Dịch", function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = CFrame.new(1608.2, 5.0, -218.3)
+        ShowNotification("Đã Dịch Chuyển", "Đã tới Phao Boss Biển Nameless Octoparasite!", "SUCCESS")
+    end
+end)
+createButtonRow(octoCard, "Dịch Đến Fisher Place", "Dịch chuyển tới Vùng Ngư Dân Dưới Đất", "Dịch", function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = CFrame.new(112.5, -330.0, -30.8)
+        ShowNotification("Đã Dịch Chuyển", "Đã tới Vùng Ngư Dân Dưới Đất!", "SUCCESS")
+    end
+end)
+
+createCategoryHeader(tabBoss, "TỰ ĐỘNG BOSS")
+local bossFarmCard = createCardGroup(tabBoss)
+createToggleRow(bossFarmCard, "Tự Farm Boss (Enzo)", "Liên tục triệu hồi và hạ gục Enzo", Config.AutoFarmBoss, function(v) Config.AutoFarmBoss = v end)
+createToggleRow(bossFarmCard, "Tự Farm Boss Ẩn", "Tự chế Nameless Bait, triệu hồi & hạ gục", Config.AutoFarmSecretBoss, function(v) Config.AutoFarmSecretBoss = v end)
+
+createButtonRow(bossFarmCard, "Dịch Đến Enzo", "Dịch chuyển tới đấu trường Enzo", "Dịch", function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = CFrame.new(-115.3, 9.2, 1349.5)
+        ShowNotification("Đã Dịch Chuyển", "Arrived at Enzo!", "SUCCESS")
+    end
+end)
+
+createCategoryHeader(tabGod, "TƯƠNG TÁC & TRẠNG THÁI THẦN LINH")
+local godCard = createCardGroup(tabGod)
+
+createButtonRow(godCard, "Kiểm Tra Trạng Thái Thần Linh", "Kiểm tra phù hộ đang có (Vàng / Xanh Dương / Xanh Lá)", "Kiểm Tra", function()
+    local pData = ReplicatedStorage:FindFirstChild("Data") and ReplicatedStorage.Data:FindFirstChild(LocalPlayer.UserId)
+    if pData and pData:FindFirstChild("GodSpirit") then
+        local y = pData.GodSpirit:FindFirstChild("Yellow") and pData.GodSpirit.Yellow.Value or false
+        local b = pData.GodSpirit:FindFirstChild("Blue") and pData.GodSpirit.Blue.Value or false
+        local g = pData.GodSpirit:FindFirstChild("Green") and pData.GodSpirit.Green.Value or false
+        local msg = string.format("Vàng: %s | Xanh Dương: %s | Xanh Lá: %s", y and "BẬT" or "TẮT", b and "BẬT" or "TẮT", g and "BẬT" or "TẮT")
+        ShowNotification("Trạng Thái Thần Linh", msg, "SUCCESS", 6)
+    else
+        ShowNotification("Thần Linh", "Không đọc được dữ liệu Thần Linh.", "WARN")
+    end
+end)
+
+createToggleRow(godCard, "Tự Cầu Nguyện Thần Linh", "Tự cầu nguyện khi ở Bàn Thờ Thần Linh", Config.AutoPrayGodSpirit, function(v) Config.AutoPrayGodSpirit = v end)
+
+createButtonRow(godCard, "Dịch Đến Bàn Thờ Thần Linh", "Dịch chuyển tới Bàn Thờ Thần Linh (Đảo Chiến Trường)", "Dịch", function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        local spirit = (Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("Spirit")) or (Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("God"))
+        if spirit then
+            root.CFrame = spirit:GetPivot() + Vector3.new(0, 3, 5)
+            ShowNotification("Thần Linh", "Đã tới Bàn Thờ Thần Linh!", "SUCCESS")
+        else
+            root.CFrame = CFrame.new(1245.7, 19.3, -133.4)
+            ShowNotification("Thần Linh", "Đã tới vị trí Đền Thờ!", "SUCCESS")
+        end
+    end
+end)
+
+local function TriggerPrompt(prompt)
+    if fireproximityprompt then
+        fireproximityprompt(prompt)
+    else
+        pcall(function()
+            prompt:InputHoldBegin()
+            task.wait(prompt.HoldDuration + 0.05)
+            prompt:InputHoldEnd()
+        end)
+    end
+end
+
+createButtonRow(godCard, "Cầu Nguyện Ngay", "Tương tác với bàn thờ Thần Linh", "Cầu Nguyện", function()
+    local sp = (Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("Spirit")) or (Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("God"))
+    if sp then
+        local found = false
+        for _, d in ipairs(sp:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                TriggerPrompt(d)
+                found = true
+            end
+        end
+        if found then
+            ShowNotification("Thần Linh", "Đã cầu nguyện tại Bàn Thờ!", "SUCCESS")
+        else
+            ShowNotification("Thần Linh", "Không tìm thấy ProximityPrompt trên Thần Linh.", "WARN")
+        end
+    else
+        ShowNotification("Thần Linh", "Thần Linh không xuất hiện ở server này.", "WARN")
+    end
+end)
+
+createCategoryHeader(tabGod, "ĐỔI SERVER")
+local hopCard = createCardGroup(tabGod)
+createToggleRow(hopCard, "Đổi Server Tìm Thần Linh", "Đổi server đến khi tìm thấy Thần Linh", Config.AutoServerHopGod, function(v) Config.AutoServerHopGod = v end)
+createToggleRow(hopCard, "Đổi Server Tìm Maoshan", "Đổi server đến khi tìm thấy Maoshan", Config.AutoServerHopMaoshan, function(v) Config.AutoServerHopMaoshan = v end)
+createToggleRow(hopCard, "Đổi Server Tìm Taoist", "Đổi server đến khi tìm thấy Taoist", Config.AutoServerHopTaoist, function(v) Config.AutoServerHopTaoist = v end)
+
+local function ServerHop()
+    ShowNotification("Đổi Server", "Đang tìm server tốt nhất...", "WARN")
+    pcall(function()
+        local placeId = game.PlaceId
+        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
+        local res = game:HttpGet(url)
+        local body = HttpService:JSONDecode(res)
+        if body and body.data then
+            for _, s in ipairs(body.data) do
+                if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                    TeleportService:TeleportToPlaceInstance(placeId, s.id, LocalPlayer)
+                    return
+                end
+            end
+        end
+    end)
+end
+createButtonRow(hopCard, "Đổi Server Ngay", "Chuyển sang server khác ngẫu nhiên ngay", "Đổi Ngay", ServerHop)
+
+createCategoryHeader(tabQuests, "NHIỆM VỤ VÉ")
+local questCard = createCardGroup(tabQuests)
+
+createToggleRow(questCard, "Tự Nhiệm Vụ Vé", "Tự nhận & nộp nhiệm vụ vé", Config.AutoTicketQuest, function(v) Config.AutoTicketQuest = v end)
+createDropdownRow(questCard, "Độ Khó", "Độ khó nhiệm vụ vé", {"Easy", "Hard"}, Config.TicketDifficulty, function(v) Config.TicketDifficulty = v end)
+
+createButtonRow(questCard, "Nộp Thủ Công (Dễ)", "Nộp ngay nhiệm vụ Dễ", "Nộp Dễ", function()
+    if Events and Events:FindFirstChild("ClaimQuest") then
+        Events.ClaimQuest:FireServer("Ticket", "Easy")
+        ShowNotification("Nhiệm Vụ", "Đã nộp nhiệm vụ vé Dễ!", "SUCCESS")
+    end
+end)
+
+createButtonRow(questCard, "Nộp Thủ Công (Khó)", "Nộp ngay nhiệm vụ Khó", "Nộp Khó", function()
+    if Events and Events:FindFirstChild("ClaimQuest") then
+        Events.ClaimQuest:FireServer("Ticket", "Hard")
+        ShowNotification("Nhiệm Vụ", "Đã nộp nhiệm vụ vé Khó!", "SUCCESS")
+    end
+end)
+
+createCategoryHeader(tabQuests, "NHIỆM VỤ NGÀY & PHẦN THƯỞNG")
+local dailyCard = createCardGroup(tabQuests)
+createButtonRow(dailyCard, "Nhận Nhiệm Vụ Ngày", "Phát hiện nhiệm vụ ngày đã xong & nhận", "Nhận", function()
+    if Events and Events:FindFirstChild("ClaimQuest") then
+        for i = 1, 4 do Events.ClaimQuest:FireServer("Daily", i) end
+        ShowNotification("Nhiệm Vụ Ngày", "Đã nhận toàn bộ nhiệm vụ ngày!", "SUCCESS")
+    end
+end)
+
+createToggleRow(dailyCard, "Tự Nhận Thưởng Ngày", "Nhận tuần tự thưởng ngày 1 đến 7", Config.AutoClaimDaily, function(v) Config.AutoClaimDaily = v end)
+createSliderRow(dailyCard, "Độ Trễ Nhận", "Độ trễ giữa các ngày nhận", 0.2, 2.0, Config.DailyClaimDelay, true, "s", function(v) Config.DailyClaimDelay = v end)
+
+createButtonRow(dailyCard, "Nhận Ngày 1-7 Ngay", "Nhận tất cả 7 thưởng ngày một lượt", "Nhận Hết", function()
+    task.spawn(function()
+        if Events and Events:FindFirstChild("DailyReward") then
+            for day = 1, 7 do
+                Events.DailyReward:FireServer(day)
+                task.wait(Config.DailyClaimDelay)
+            end
+            ShowNotification("Thưởng Ngày", "Đã nhận thành công ngày 1-7!", "SUCCESS")
+        end
+    end)
+end)
+
+createButtonRow(dailyCard, "Nhập Tất Cả Code", "Nhập toàn bộ code khuyến mãi đang hoạt động", "Nhập Code", function()
+    local codes = {"33MVisits", "32MVisits", "31MVisits", "30MVisits", "Taiji", "49KLikes", "48KLikes", "47KLikes", "46KLikes", "13KActives", "HWF", "RELEASE"}
+    if Events and Events:FindFirstChild("RedeemCode") then
+        for _, c in ipairs(codes) do
+            Events.RedeemCode:FireServer(c)
+            task.wait(0.2)
+        end
+        ShowNotification("Code", "Đã nhập toàn bộ code đang hoạt động!", "SUCCESS")
+    end
+end)
+
+createCategoryHeader(tabShop, "CHẾ TẠO & MUA MỒI")
+local baitCard = createCardGroup(tabShop)
+
+local craftBaits = {"Nameless Bait", "Frost Bait", "Rainbow Bait"}
+createDropdownRow(baitCard, "Mồi Cần Chế", "Mồi boss huyền thoại cần chế", craftBaits, Config.CraftBaitName, function(v) Config.CraftBaitName = v end)
+createSliderRow(baitCard, "Số Lượng Chế", "Số lượng chế mỗi lần", 1, 10, Config.CraftAmount, false, "", function(v) Config.CraftAmount = v end)
+createToggleRow(baitCard, "Tự Chế Mồi", "Tự chế liên tục khi có nguyên liệu", Config.AutoCraftBait, function(v) Config.AutoCraftBait = v end)
+
+local buyBaits = {"Ancestral Bait", "Elite Bait", "Corrupted Essence Bait", "Crude Mash Bait", "Basic Bait"}
+createDropdownRow(baitCard, "Mồi Cần Mua", "Mồi mua từ Ba Chang", buyBaits, Config.BuyBaitName, function(v) Config.BuyBaitName = v end)
+createSliderRow(baitCard, "Số Lượng Mua", "Số lượng mua mỗi lần", 1, 50, Config.BuyBaitAmount, false, "", function(v) Config.BuyBaitAmount = v end)
+createSliderRow(baitCard, "Ngưỡng Tồn Kho", "Mua khi tồn kho xuống dưới mức này", 5, 50, Config.BuyBaitThreshold, false, "", function(v) Config.BuyBaitThreshold = v end)
+createToggleRow(baitCard, "Tự Mua Mồi", "Tự mua thêm mồi khi sắp hết", Config.AutoBuyBait, function(v) Config.AutoBuyBait = v end)
+
+createCategoryHeader(tabShop, "SAGE YIJIU (BÁN KỸ NĂNG)")
+local sageCard = createCardGroup(tabShop)
+local sageSkills = {"One-Strike Heaven Gate", "Taijiquan Technique", "Infinite Sky Ascension", "Rolling Chaos", "Sever the Gate", "Phoenix Strike Art", "Skyfall Stomp", "Beastbreaker Cleave", "Demonfall Technique", "Dragon Strike"}
+local chosenSageSkill = sageSkills[1]
+createDropdownRow(sageCard, "Chọn Kỹ Năng", "Kỹ năng học từ Sage Yijiu", sageSkills, chosenSageSkill, function(v) chosenSageSkill = v end)
+
+createButtonRow(sageCard, "Mua Kỹ Năng & Dịch Chuyển", "Dịch tới Sage Yijiu & mua kỹ năng", "Mua Kỹ Năng", function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = CFrame.new(-117.5, 6.8, 41.2)
+        task.wait(0.3)
+        if Events and Events:FindFirstChild("BuySkill") then
+            Events.BuySkill:FireServer(chosenSageSkill)
+            ShowNotification("Sage Yijiu", "Đã mua " .. chosenSageSkill .. "!", "SUCCESS")
+        end
+    end
+end)
+
+createCategoryHeader(tabShop, "GACHA TỰ ĐỘNG")
+local gachaCard = createCardGroup(tabShop)
+createDropdownRow(gachaCard, "Banner Gacha", "Banner triệu hồi đang mở", {"Taiji Banner", "Egoless Banner"}, Config.GachaBanner, function(v) Config.GachaBanner = v end)
+createSliderRow(gachaCard, "Vé Mỗi Lần Quay", "Số vé mỗi lần quay", 1, 10, Config.GachaPullsPerAction, false, "", function(v) Config.GachaPullsPerAction = v end)
+createToggleRow(gachaCard, "Gacha Tự Động", "Tự quay từ banner đã chọn", Config.AutoGacha, function(v) Config.AutoGacha = v end)
+
+createCategoryHeader(tabShop, "DANH SÁCH CẦN CÂU (THEO GIÁ)")
+local rodShopCard = createCardGroup(tabShop)
+
+local function formatNumber(n)
+    if n == 0 then return "FREE" end
+    local formatted = tostring(n)
+    local k
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then break end
+    end
+    return formatted .. " Cash"
+end
+
+for _, rod in ipairs(allRods) do
+    local pStr = formatNumber(rod.price)
+    local desc = string.format("Power: %d | Luck: %d%% | %s", rod.power, rod.luck, pStr)
+    createButtonRow(rodShopCard, rod.name, desc, "Mua", function()
+        if Events and Events:FindFirstChild("BuyFishingRod") then
+            Events.BuyFishingRod:FireServer(rod.name)
+            ShowNotification("Shop Cần Câu", "Đã thử mua " .. rod.name, "SUCCESS")
+        end
+    end)
+end
+
+createCategoryHeader(tabTeleports, "ĐẢO (1-10)")
+local islandCard = createCardGroup(tabTeleports)
+
+local islands = {
+    {name = "[1] Đảo Khởi Đầu (Spawn)", pos = Vector3.new(-200.7, 11.1, 35.9)},
+    {name = "[2] Đảo Tre", pos = Vector3.new(-1223.0, 7.3, -24.1)},
+    {name = "[3] Đảo Fallout", pos = Vector3.new(65.5, 8.8, 1181.3)},
+    {name = "[4] Đảo Chúa Tể", pos = Vector3.new(-1276.4, 8.8, 1239.7)},
+    {name = "[5] Đảo Cá Rô", pos = Vector3.new(-62.0, 11.9, -1321.4)},
+    {name = "[6] Đảo Băng Giá", pos = Vector3.new(-1366.0, 11.9, -1495.4)},
+    {name = "[7] Đảo Dừa", pos = Vector3.new(1493.6, 9.1, -1430.6)},
+    {name = "[8] Đảo Hổ Phách", pos = Vector3.new(1259.4, 9.1, 1401.5)},
+    {name = "[9] Đảo Chiến Trường", pos = Vector3.new(1393.5, 11.3, 169.6)},
+    {name = "[10] Đảo Đỉnh Sương", pos = Vector3.new(2660.2, 8.8, -86.7)},
+}
+
+for _, isl in ipairs(islands) do
+    createButtonRow(islandCard, isl.name, "Dịch tới " .. isl.name, "Dịch", function()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = CFrame.new(isl.pos + Vector3.new(0, 3, 0))
+            ShowNotification("Dịch", "Đã tới " .. isl.name .. "!", "SUCCESS")
+        end
+    end)
+end
+
+createCategoryHeader(tabTeleports, "ĐẤU TRƯỜNG BOSS & VÙNG ẨN")
+local bossRealmCard = createCardGroup(tabTeleports)
+
+local bossRealms = {
+    {name = "Octoparasite (Phao Boss Biển)", pos = Vector3.new(1608.2, 5.0, -218.3)},
+    {name = "Fisher Place (Vùng Dưới Đất)", pos = Vector3.new(112.5, -330.0, -30.8)},
+    {name = "Đấu Trường Boss Enzo", pos = Vector3.new(-115.3, 9.2, 1349.5)},
+}
+
+for _, br in ipairs(bossRealms) do
+    createButtonRow(bossRealmCard, br.name, "Dịch tới " .. br.name, "Dịch", function()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = CFrame.new(br.pos + Vector3.new(0, 3, 0))
+            ShowNotification("Dịch", "Đã tới " .. br.name .. "!", "SUCCESS")
+        end
+    end)
+end
+
+createCategoryHeader(tabTeleports, "SHOP BÁN CẦN CÂU")
+local rodDealerCard = createCardGroup(tabTeleports)
+
+local rodDealers = {
+    {name = "[1] Shop Đảo Khởi Đầu", pos = Vector3.new(-151.4, 8.7, -49.9)},
+    {name = "[2] Shop Đảo Tre", pos = Vector3.new(-1236.8, 7.3, -174.1)},
+    {name = "[3] Shop Đảo Fallout", pos = Vector3.new(138.4, 9.0, 1179.7)},
+    {name = "[4] Shop Đảo Chúa Tể", pos = Vector3.new(-1262.6, 8.2, 1202.2)},
+    {name = "[5] Shop Đảo Cá Rô", pos = Vector3.new(-9.5, 9.2, -1330.0)},
+    {name = "[6] Shop Đảo Băng Giá", pos = Vector3.new(-1400.4, 9.2, -1490.6)},
+    {name = "[7] Shop Đảo Dừa", pos = Vector3.new(1446.0, 9.3, -1408.0)},
+    {name = "[8] Shop Đảo Hổ Phách", pos = Vector3.new(1292.7, 8.2, 1497.4)},
+}
+
+for _, rd in ipairs(rodDealers) do
+    createButtonRow(rodDealerCard, rd.name, "Dịch chuyển thẳng tới shop cần câu", "Dịch", function()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = CFrame.new(rd.pos + Vector3.new(0, 3, 0))
+            ShowNotification("Shop Cần Câu", "Đã tới " .. rd.name .. "!", "SUCCESS")
+        end
+    end)
+end
+
+createCategoryHeader(tabTeleports, "VỊ TRÍ CẦN CÂU ẨN")
+local sRodCard = createCardGroup(tabTeleports)
+
+local secretRods = {
+    {name = "Anchorbound Rod", pos = Vector3.new(-1208.5, 56.3, 1646.2)},
+    {name = "Blazeshark Rod", pos = Vector3.new(-8.4, 53.9, 6.7)},
+    {name = "Kraken Rod", pos = Vector3.new(1543.8, 73.4, 1490.9)},
+    {name = "Ascendant Bamboo Rod", pos = Vector3.new(-1360.6, 140.6, 31.0)},
+    {name = "Lifebloom Rod", pos = Vector3.new(-114.9, 74.9, -1533.2)},
+    {name = "Demonic Rod", pos = Vector3.new(1181.9, 82.9, -1243.8)}
+}
+
+for _, sr in ipairs(secretRods) do
+    createButtonRow(sRodCard, sr.name, "Dịch chuyển tới vị trí cần câu ẩn", "Dịch", function()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = CFrame.new(sr.pos + Vector3.new(0, 3, 0))
+            ShowNotification("Cần Câu Ẩn", "Đã dịch tới " .. sr.name .. "!", "SUCCESS")
+        end
+    end)
+end
+
+createCategoryHeader(tabTeleports, "DỊCH CHUYỂN SERVER & NGƯỜI CHƠI")
+local srvCard = createCardGroup(tabTeleports)
+
+local lastTpTarget = nil
+createButtonRow(srvCard, "Dịch Đến Người Chơi Ngẫu Nhiên", "Dịch chuyển thẳng tới người chơi khác", "Dịch", function()
+    local targets = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            table.insert(targets, p)
+        end
+    end
+    if #targets == 0 then
+        ShowNotification("Dịch Đến Người Chơi", "Không tìm thấy người chơi khác.", "WARN")
+        return
+    end
+    local pool = {}
+    for _, p in ipairs(targets) do
+        if not (#targets > 1 and p == lastTpTarget) then
+            table.insert(pool, p)
+        end
+    end
+    local selected = (#pool > 0 and pool[math.random(1, #pool)]) or targets[math.random(1, #targets)]
+    lastTpTarget = selected
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root and selected.Character and selected.Character:FindFirstChild("HumanoidRootPart") then
+        root.CFrame = selected.Character.HumanoidRootPart.CFrame + Vector3.new(0, 2, 3)
+        ShowNotification("Dịch Đến Người Chơi", "Đã dịch tới " .. selected.DisplayName, "SUCCESS")
+    end
+end)
+
+createCategoryHeader(tabVisuals, "ESP THẾ GIỚI & THỰC THỂ")
+local espCard = createCardGroup(tabVisuals)
+
+createToggleRow(espCard, "ESP Thần Linh", "Làm nổi bật Thần Linh đang xuất hiện", Config.ESP_GodSpirit, function(v) Config.ESP_GodSpirit = v end)
+createToggleRow(espCard, "ESP Cần Câu Ẩn", "Làm nổi bật mọi vị trí cần câu ẩn", Config.ESP_SecretRod, function(v) Config.ESP_SecretRod = v end)
+createToggleRow(espCard, "ESP Thuyền", "Làm nổi bật thuyền đã xuất hiện", Config.ESP_Boats, function(v) Config.ESP_Boats = v end)
+createToggleRow(espCard, "ESP Maoshan", "Làm nổi bật NPC / Cần Câu Maoshan", Config.ESP_Maoshan, function(v) Config.ESP_Maoshan = v end)
+createToggleRow(espCard, "ESP Taoist", "Làm nổi bật NPC / Cần Câu Taoist", Config.ESP_Taoist, function(v) Config.ESP_Taoist = v end)
+createToggleRow(espCard, "ESP Boss", "Làm nổi bật boss đang xuất hiện", Config.ESP_Boss, function(v) Config.ESP_Boss = v end)
+createToggleRow(espCard, "ESP Người Chơi", "Làm nổi bật người chơi khác kèm khoảng cách", Config.ESP_Players, function(v) Config.ESP_Players = v end)
+createToggleRow(espCard, "Vòng Tròn Mục Tiêu Cá", "Hiện vòng đỏ phát sáng quanh cá đang kéo", Config.FishRedRing, function(v) Config.FishRedRing = v end)
+
+createCategoryHeader(tabVisuals, "ÁNH SÁNG & HIỆU NĂNG")
+local perfCard = createCardGroup(tabVisuals)
+
+createToggleRow(perfCard, "Tắt Sương Mù & Mưa", "Xóa sương mù, khói, hạt mưa & sét", Config.NoFog, function(v)
+    Config.NoFog = v
+    if v then
+        Lighting.FogEnd = 1000000
+        Lighting.FogStart = 1000000
+        local atmo = Lighting:FindFirstChildWhichIsA("Atmosphere")
+        if atmo then
+            atmo.Density = 0
+            atmo.Haze = 0
+            atmo.Glare = 0
+        end
+        for _, d in ipairs(Camera:GetDescendants()) do
+            if d:IsA("ParticleEmitter") then d.Enabled = false end
+        end
+    else
+        Lighting.FogEnd = 100000
+        Lighting.FogStart = 0
+        local atmo = Lighting:FindFirstChildWhichIsA("Atmosphere")
+        if atmo then
+            atmo.Density = 0.3
+            atmo.Haze = 0.5
+        end
+    end
+end)
+
+createToggleRow(perfCard, "Sáng Tối Đa", "Đặt độ sáng và tầm nhìn tối đa", Config.Fullbright, function(v)
+    Config.Fullbright = v
+    if not v then
+        Lighting.Brightness = 2
+        Lighting.Ambient = Color3.fromRGB(70, 70, 70)
+        Lighting.OutdoorAmbient = Color3.fromRGB(70, 70, 70)
+        Lighting.GlobalShadows = true
+    end
+end)
+
+createToggleRow(perfCard, "Chế Độ Hiệu Năng (GFX Thấp)", "Tắt bóng & giảm tải hiển thị", Config.PerformanceMode, function(v)
+    Config.PerformanceMode = v
+    Lighting.GlobalShadows = not v
+end)
+
+
+
+
+createToggleRow(perfCard, "Ẩn Giao Diện Game", "Ẩn UI game Roblox cho khung nhìn sạch", Config.HideGameUI, function(v)
+    Config.HideGameUI = v
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        if pg:FindFirstChild("MainGui") then pg.MainGui.Enabled = not v end
+        if pg:FindFirstChild("Fisher_GUI") then pg.Fisher_GUI.Enabled = not v end
+    end
+end)
+
+createButtonRow(perfCard, "Mở Khóa Toàn Bộ Index", "Hiện toàn bộ 109 cá & vật phẩm trong index", "Mở Index", function()
+    local count = 0
+    local pData = ReplicatedStorage:FindFirstChild("Data") and ReplicatedStorage.Data:FindFirstChild(LocalPlayer.UserId)
+    if pData and pData:FindFirstChild("Index") then
+        for _, b in ipairs(pData.Index:GetChildren()) do
+            if b:IsA("BoolValue") then b.Value = true end
+        end
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Menu") and pg.MainGui.Menu:FindFirstChild("Index") then
+        local indexList = pg.MainGui.Menu.Index:FindFirstChild("IndexFrame") and pg.MainGui.Menu.Index.IndexFrame:FindFirstChild("Indexlist")
+        if indexList then
+            for _, f in ipairs(indexList:GetChildren()) do
+                if f:IsA("Frame") then
+                    count = count + 1
+                    local btn = f:FindFirstChild("Button")
+                    if btn then
+                        local title = btn:FindFirstChild("Title")
+                        if title and title:IsA("TextLabel") then title.Text = f.Name end
+                        local detail = btn:FindFirstChild("Detail")
+                        if detail then
+                            detail.Visible = true
+                            for _, img in ipairs(detail:GetDescendants()) do
+                                if img:IsA("ImageLabel") then img.ImageColor3 = Color3.new(1, 1, 1) end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    ShowNotification("Đã Mở Index", string.format("Đã hiện %d cá trong Index của bạn!", count > 0 and count or 109), "SUCCESS")
+end)
+
+createCategoryHeader(tabPlayer, "DI CHUYỂN NHÂN VẬT")
+local moveCard = createCardGroup(tabPlayer)
+
+createToggleRow(moveCard, "Tăng Tốc Chạy", "Tăng tốc độ di chuyển", Config.WalkSpeedEnabled, function(v)
+    Config.WalkSpeedEnabled = v
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed = v and Config.WalkSpeedValue or 16 end
+end)
+createSliderRow(moveCard, "Giá Trị Tốc Độ", "Tốc độ chạy mục tiêu", 16, 120, Config.WalkSpeedValue, false, "", function(v)
+    Config.WalkSpeedValue = v
+    if Config.WalkSpeedEnabled then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = v end
+    end
+end)
+
+createToggleRow(moveCard, "Bay", "Bay tự do bằng WASD & Space/Shift", Config.FlyEnabled, function(v) Config.FlyEnabled = v end)
+createSliderRow(moveCard, "Tốc Độ Bay", "Vận tốc bay", 20, 150, Config.FlySpeed, false, "", function(v) Config.FlySpeed = v end)
+createToggleRow(moveCard, "Nhảy Vô Hạn", "Nhảy liên tục giữa không trung", Config.InfiniteJump, function(v) Config.InfiniteJump = v end)
+createToggleRow(moveCard, "Đi Trên Nước", "Đi trên mặt biển (SeaLevel: 0)", Config.WalkOnWater, function(v) Config.WalkOnWater = v end)
+createToggleRow(moveCard, "Xuyên Vật Thể", "Đi xuyên qua tường và vật cản", Config.Noclip, function(v) Config.Noclip = v end)
+
+createCategoryHeader(tabPlayer, "CHỐNG AFK & ỔN ĐỊNH")
+local stabCard = createCardGroup(tabPlayer)
+createToggleRow(stabCard, "Chống AFK", "Ngăn Roblox ngắt kết nối sau 20 phút treo máy", Config.AntiAFK, function(v) Config.AntiAFK = v end)
+createToggleRow(stabCard, "Tự Vào Lại Khi Bị Kick", "Tự động kết nối lại server", Config.AutoRejoin, function(v) Config.AutoRejoin = v end)
+
+createCategoryHeader(tabProfiles, "QUẢN LÝ CẤU HÌNH")
+local profCard = createCardGroup(tabProfiles)
+
+createButtonRow(profCard, "Lưu Cấu Hình", "Lưu toàn bộ cài đặt ra file JSON", "Lưu", function()
+    if SaveProfile() then
+        ShowNotification("Đã Lưu Cấu Hình", "Đã lưu profile 'default.json' thành công!", "SUCCESS")
+    else
+        ShowNotification("Lỗi Cấu Hình", "Lưu profile thất bại.", "ERROR")
+    end
+end)
+
+createButtonRow(profCard, "Tải Cấu Hình", "Tải cài đặt từ file JSON", "Tải", function()
+    if LoadProfile() then
+        ShowNotification("Đã Tải Cấu Hình", "Đã tải profile 'default.json' thành công!", "SUCCESS")
+    else
+        ShowNotification("Lỗi Cấu Hình", "Không tìm thấy profile đã lưu.", "WARN")
+    end
+end)
+
+createToggleRow(profCard, "Tự Tải Cấu Hình Khi Chạy", "Tự tải cấu hình khi khởi động", Config.AutoLoadProfile, function(v) Config.AutoLoadProfile = v end)
+
+createCategoryHeader(tabProfiles, "HÀNH ĐỘNG PHIÊN")
+local credCard = createCardGroup(tabProfiles)
+createButtonRow(credCard, "Gỡ Script", "Gỡ script sạch sẽ và khôi phục ánh sáng", "Gỡ", UnloadScript)
+
+local lastCastTime = 0
+local lastSellTime = 0
+local lastSkillTime = 0
+local lastAllSkillTime = 0
+local lastGachaTime = 0
+local lastBaitBuyTime = 0
+local lastQuestTime = 0
+local lastGodPrayTime = 0
+local lastEquipTime = 0
+local lastEquipRodTime = 0
+local lastProgressionTime = 0
+local lastProtectTime = 0
+local fishingStartTime = 0
+local wasFishing = false
+
+local craftMaterialFish = {
+    ["Mountain Fish"] = true,
+    ["Catfish"] = true,
+    ["Crimson Catfish"] = true,
+    ["Scarlet Fish"] = true,
+    ["Elder Scarlet Fish"] = true,
+    ["Octoparasitic Fish"] = true,
+    ["Tiger Mirefish"] = true,
+    ["Mirage Lanternfish"] = true,
+    ["Golden Guardian Fish"] = true,
+    ["Frost Kingfish"] = true,
+    ["Frost Queenfish"] = true,
+    ["Rainbow Dragonfish"] = true,
+    ["Sanguine Fish"] = true,
+}
+
+local waterPlatform = Instance.new("Part")
+waterPlatform.Name = "IdenticalWaterPlatform"
+waterPlatform.Size = Vector3.new(60, 2, 60)
+waterPlatform.Anchored = true
+waterPlatform.CanCollide = false
+waterPlatform.CanQuery = false
+waterPlatform.CanTouch = false
+waterPlatform.Transparency = 1
+waterPlatform.Parent = Workspace
+table.insert(cleanUpInstances, waterPlatform)
+
+table.insert(activeConnections, RunService.Heartbeat:Connect(function(dt)
+    if not isRunning then return end
+    pcall(function()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+        local now = tick()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local pData = ReplicatedStorage:FindFirstChild("Data") and ReplicatedStorage.Data:FindFirstChild(LocalPlayer.UserId)
+
+        if Config.WalkSpeedEnabled then
+            hum.WalkSpeed = Config.WalkSpeedValue
+        end
+
+        if Config.WalkOnWater then
+            waterPlatform.CFrame = CFrame.new(root.Position.X, 0, root.Position.Z)
+            waterPlatform.CanCollide = (root.Position.Y >= -1)
+        else
+            waterPlatform.CanCollide = false
+        end
+
+        if Config.Noclip then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        local isFishing = char:GetAttribute("Fishing") == true
+        local isMinigame = char:GetAttribute("Minigame") == true or (pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Fishing") and pg.MainGui.Fishing.Visible)
+        local isCD = char:GetAttribute("CDForTheNextThrow") == true
+        local isSwimming = char:GetAttribute("Swimming") == true
+
+        if Config.AutoCast and char:GetAttribute("Type") ~= "Fishing Rod" and (now - lastEquipRodTime >= 1.0) then
+            lastEquipRodTime = now
+            local rodSlot = "1"
+            if pData and pData:FindFirstChild("Hotbar") then
+                for _, item in ipairs(pData.Hotbar:GetChildren()) do
+                    local vName = item:FindFirstChild("ValueName")
+                    if vName and tostring(vName.Value):lower():find("rod") and not tostring(vName.Value):lower():find("inventory") then
+                        rodSlot = item.Name
+                        break
+                    end
+                end
+            end
+            if Events and Events:FindFirstChild("ToggleHotbar") then
+                Events.ToggleHotbar:InvokeServer(rodSlot)
+            end
+        end
+
+        if isFishing and not wasFishing then
+            fishingStartTime = now
+        elseif not isFishing then
+            fishingStartTime = 0
+        end
+        wasFishing = isFishing
+
+        if isFishing and not isMinigame and fishingStartTime > 0 and (now - fishingStartTime >= 15.0) then
+            fishingStartTime = now
+            if Events and Events:FindFirstChild("Fishing") then
+                Events.Fishing:FireServer(root.CFrame)
+            end
+        end
+
+        if isMinigame then
+            local fUI = pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Fishing")
+            if fUI and fUI.Visible then
+                if Config.AnchorBar then
+                    local barFrame = fUI:FindFirstChild("BarFrame")
+                    if barFrame and barFrame:FindFirstChild("Bar") then
+                        barFrame.Bar:TweenPosition(UDim2.new(0.5, 0, 0.5, 0), Enum.EasingDirection.InOut, Enum.EasingStyle.Linear, 0, true)
+                        barFrame.Bar.Position = UDim2.new(0.5, 0, 0.5, 0)
+                    end
+                end
+
+                if Config.AutoSlam and fUI:FindFirstChild("PerfectButton") and fUI.PerfectButton.Visible then
+                    if Events:FindFirstChild("Slam") then
+                        Events.Slam:FireServer()
+                    end
+                end
+
+                if Config.AutoCharge and fUI:FindFirstChild("Charge") and fUI.Charge.Visible then
+                    if Events:FindFirstChild("Charge") then
+                        Events.Charge:FireServer()
+                    end
+                end
+
+                if Config.AnchorBar and (now - lastProgressionTime >= 0.08) then
+                    if Events and Events:FindFirstChild("UpdateFishProgression") then
+                        Events.UpdateFishProgression:FireServer()
+                    end
+                    lastProgressionTime = now
+                end
+
+                if Config.AutoSkills and (now - lastSkillTime >= 0.15) then
+                    for _, sk in ipairs({"Z", "X", "C", "V"}) do
+                        if Events:FindFirstChild("UseSkill") then Events.UseSkill:FireServer(sk) end
+                        if Events:FindFirstChild("TriggerMinigameSkill") then Events.TriggerMinigameSkill:FireServer(sk) end
+                    end
+                    lastSkillTime = now
+                end
+
+                if Config.AutoAllSkills and (now - lastAllSkillTime >= (Config.SkillDelay or 0.15)) then
+                    lastAllSkillTime = now
+                    UseAllSkills()
+                end
+            end
+        elseif isFishing then
+            lastCastTime = now
+        else
+            if Config.AutoCast and not isCD and not isSwimming and (char:GetAttribute("Type") == "Fishing Rod") and (now - lastCastTime >= Config.CastDelay) then
+                local canCast = true
+                if pData and pData:FindFirstChild("InventoryLimit") then
+                    local invCount = 0
+                    if pData:FindFirstChild("Inventory") then invCount = invCount + #pData.Inventory:GetChildren() end
+                    if pData:FindFirstChild("Hotbar") then
+                        for _, item in ipairs(pData.Hotbar:GetChildren()) do
+                            if item:FindFirstChild("Quantity") then invCount = invCount + item.Quantity.Value else invCount = invCount + 1 end
+                        end
+                    end
+                    if invCount >= pData.InventoryLimit.Value then
+                        canCast = false
+                        if Config.AutoSell and (now - lastSellTime >= 5.0) and Events:FindFirstChild("SellFish") then
+                            if (Config.MaterialFarming or Config.AutoFavouriteFish) and pData:FindFirstChild("Inventory") then
+                                for _, item in ipairs(pData.Inventory:GetChildren()) do
+                                    local itemName = item.Name
+                                    local isFav = item:FindFirstChild("Favorite") and item.Favorite.Value == true
+                                    if not isFav and ((Config.MaterialFarming and craftMaterialFish[itemName]) or (Config.AutoFavouriteFish and itemName == Config.FavouriteFishName)) then
+                                        if Events:FindFirstChild("FavoriteItem") then Events.FavoriteItem:FireServer(item) end
+                                    end
+                                end
+                            end
+                            Events.SellFish:FireServer("All")
+                            lastSellTime = now
+                        end
+                    end
+                end
+
+                if Config.AutoSell and (now - lastSellTime >= Config.SellInterval) and Events:FindFirstChild("SellFish") then
+                    if (Config.MaterialFarming or Config.AutoFavouriteFish) and pData and pData:FindFirstChild("Inventory") then
+                        for _, item in ipairs(pData.Inventory:GetChildren()) do
+                            local itemName = item.Name
+                            local isFav = item:FindFirstChild("Favorite") and item.Favorite.Value == true
+                            if not isFav and ((Config.MaterialFarming and craftMaterialFish[itemName]) or (Config.AutoFavouriteFish and itemName == Config.FavouriteFishName)) then
+                                if Events:FindFirstChild("FavoriteItem") then Events.FavoriteItem:FireServer(item) end
+                            end
+                        end
+                    end
+                    Events.SellFish:FireServer("All")
+                    lastSellTime = now
+                end
+
+                if (Config.MaterialFarming or Config.AutoFavouriteFish) and (now - lastProtectTime >= 1.5) and pData and pData:FindFirstChild("Inventory") then
+                    lastProtectTime = now
+                    for _, item in ipairs(pData.Inventory:GetChildren()) do
+                        local itemName = item.Name
+                        local isFav = item:FindFirstChild("Favorite") and item.Favorite.Value == true
+                        if not isFav then
+                            local shouldProtect = false
+                            if Config.MaterialFarming and craftMaterialFish[itemName] then shouldProtect = true end
+                            if Config.AutoFavouriteFish and itemName == Config.FavouriteFishName then shouldProtect = true end
+                            if shouldProtect and Events:FindFirstChild("FavoriteItem") then
+                                Events.FavoriteItem:FireServer(item)
+                            end
+                        end
+                    end
+                end
+
+                if canCast and Events and Events:FindFirstChild("Fishing") then
+                    Events.Fishing:FireServer(root.CFrame)
+                    lastCastTime = now
+                end
+            end
+        end
+
+        if (now - lastEquipTime >= 5.0) and pData then
+            lastEquipTime = now
+            if Config.AutoEquipBestBait and pData:FindFirstChild("Bait") and pData:FindFirstChild("EquippedBait") and Events:FindFirstChild("EquipBait") then
+                local bestBait = nil
+                local bestLuck = -1
+                local baitLuckMap = {
+                    ["Ancestral Bait"] = 50,
+                    ["Elite Bait"] = 30,
+                    ["Corrupted Essence Bait"] = 18,
+                    ["Crude Mash Bait"] = 8,
+                    ["Basic Bait"] = 3
+                }
+                for bName, bLuck in pairs(baitLuckMap) do
+                    local bVal = pData.Bait:FindFirstChild(bName)
+                    if bVal and bVal.Value > 0 and bLuck > bestLuck then
+                        bestLuck = bLuck
+                        bestBait = bName
+                    end
+                end
+                if bestBait and pData.EquippedBait.Value ~= bestBait then
+                    Events.EquipBait:InvokeServer(bestBait)
+                end
+            end
+
+            if Config.AutoEquipBestRod and pData:FindFirstChild("FishingRodInventory") and pData:FindFirstChild("FishingRod") and Events:FindFirstChild("EquipFishingRod") then
+                local bestRod = nil
+                local bestPower = -1
+                for _, r in ipairs(allRods) do
+                    local rFolder = pData.FishingRodInventory:FindFirstChild(r.name)
+                    local isOwned = rFolder and rFolder:FindFirstChild("Owned") and rFolder.Owned.Value == true
+                    if isOwned and r.power > bestPower then
+                        bestPower = r.power
+                        bestRod = r.name
+                    end
+                end
+                if bestRod and pData.FishingRod.Value ~= bestRod then
+                    Events.EquipFishingRod:InvokeServer(bestRod)
+                    task.delay(0.5, function()
+                        if Events and Events:FindFirstChild("ToggleHotbar") then
+                            Events.ToggleHotbar:InvokeServer("1")
+                        end
+                    end)
+                end
+            end
+
+            if Config.AutoEquipBestOrb and pData:FindFirstChild("Orb") and Events:FindFirstChild("EquipOrb") then
+                local orbs = pData.Orb:GetChildren()
+                if #orbs > 0 then
+                    local bestOrb = orbs[#orbs].Name
+                    Events.EquipOrb:InvokeServer(bestOrb)
+                end
+            end
+
+            if pData:FindFirstChild("FishingRod") and pData.FishingRod.Value ~= "" then infoEquippedRod.Set(pData.FishingRod.Value) end
+            if pData:FindFirstChild("EquippedBait") and pData.EquippedBait.Value ~= "" then infoEquippedBait.Set(pData.EquippedBait.Value) end
+            if pData:FindFirstChild("FishCaught") then infoFishCaught.Set(tostring(pData.FishCaught.Value)) end
+            if pData:FindFirstChild("Cash") then infoCash.Set("$" .. tostring(pData.Cash.Value)) end
+        end
+
+        if Config.AutoSell and (now - lastSellTime >= Config.SellInterval) then
+            if Events and Events:FindFirstChild("SellFish") then
+                Events.SellFish:FireServer("All")
+                lastSellTime = now
+            end
+        end
+
+        if Config.AutoPrayGodSpirit and (now - lastGodPrayTime >= 3.0) then
+            if Workspace:FindFirstChild("NPC") then
+                local sp = Workspace.NPC:FindFirstChild("Spirit") or Workspace.NPC:FindFirstChild("God")
+                if sp then
+                    for _, d in ipairs(sp:GetDescendants()) do
+                        if d:IsA("ProximityPrompt") then
+                            TriggerPrompt(d)
+                            lastGodPrayTime = now
+                        end
+                    end
+                end
+            end
+        end
+
+        if Config.AutoTicketQuest and (now - lastQuestTime >= 2.0) then
+            if Events and Events:FindFirstChild("ClaimQuest") then
+                Events.ClaimQuest:FireServer("Ticket", Config.TicketDifficulty)
+                lastQuestTime = now
+            end
+        end
+
+        if Config.AutoClaimDaily and (now - lastCastTime >= 2.0) then
+            if Events and Events:FindFirstChild("DailyReward") then
+                for day = 1, 7 do Events.DailyReward:FireServer(day) end
+            end
+        end
+
+        if Config.AutoGacha and (now - lastGachaTime >= 1.5) then
+            if Events and Events:FindFirstChild("Gacha") then
+                Events.Gacha:FireServer(Config.GachaBanner, Config.GachaPullsPerAction)
+                lastGachaTime = now
+            end
+        end
+
+        if Config.AutoCraftBait and (now - lastCastTime >= 2.0) then
+            if Events and Events:FindFirstChild("CraftBait") then
+                Events.CraftBait:FireServer(Config.CraftBaitName, Config.CraftAmount)
+            end
+        end
+
+        if Config.AutoBuyBait and (now - lastBaitBuyTime >= Config.BuyBaitDelay) then
+            if Events and Events:FindFirstChild("BuyBait") then
+                Events.BuyBait:FireServer(Config.BuyBaitName, Config.BuyBaitAmount)
+                lastBaitBuyTime = now
+            end
+        end
+
+        if Config.OctoAutoMinigame then
+            if Events and Events:FindFirstChild("RhythmHit") then
+                Events.RhythmHit:FireServer(true, 100)
+            end
+        end
+    end)
+end))
+
+local flyBV, flyBG = nil, nil
+table.insert(activeConnections, RunService.RenderStepped:Connect(function()
+    if not isRunning then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    if Config.FlyEnabled then
+        if not flyBV then
+            flyBV = Instance.new("BodyVelocity")
+            flyBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            flyBV.Parent = root
+            table.insert(cleanUpInstances, flyBV)
+
+            flyBG = Instance.new("BodyGyro")
+            flyBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+            flyBG.Parent = root
+            table.insert(cleanUpInstances, flyBG)
+        end
+
+        local camCF = Camera.CFrame
+        local dir = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + camCF.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - camCF.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + camCF.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - camCF.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
+
+        flyBG.CFrame = camCF
+        flyBV.Velocity = dir.Unit * Config.FlySpeed
+        if dir.Magnitude == 0 then flyBV.Velocity = Vector3.zero end
+    else
+        if flyBV then flyBV:Destroy(); flyBV = nil end
+        if flyBG then flyBG:Destroy(); flyBG = nil end
+    end
+end))
+
+table.insert(activeConnections, RunService.RenderStepped:Connect(function()
+    if not isRunning then return end
+    pcall(function()
+        if Config.AnchorBar then
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            if pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Fishing") and pg.MainGui.Fishing.Visible then
+                local fUI = pg.MainGui.Fishing
+                local barFrame = fUI:FindFirstChild("BarFrame")
+                if barFrame and barFrame:FindFirstChild("Bar") then
+                    barFrame.Bar.Position = UDim2.new(0.5, 0, 0.5, 0)
+                end
+                local bossBar = fUI:FindFirstChild("BossFightBar")
+                if bossBar and bossBar.Visible and bossBar:FindFirstChild("Bar") and bossBar:FindFirstChild("Hitbox") then
+                    bossBar.Bar.Position = bossBar.Hitbox.Position
+                end
+                local hpPlayer = fUI:FindFirstChild("HPPlayer")
+                if hpPlayer and hpPlayer:FindFirstChild("ProgressionBar") then
+                    local pBar = hpPlayer.ProgressionBar
+                    if pBar:FindFirstChild("Bar") then
+                        pBar.Bar.Size = UDim2.new(1, 0, 1, 0)
+                    end
+                end
+                if fUI:FindFirstChild("PerfectButton") and fUI.PerfectButton.Visible then
+                    if Events and Events:FindFirstChild("Slam") then Events.Slam:FireServer("Perfect") end
+                end
+                if fUI:FindFirstChild("Charge") and fUI.Charge.Visible then
+                    if Events and Events:FindFirstChild("Charge") then Events.Charge:FireServer(100) end
+                end
+                local cutscene = pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Cutscene")
+                if cutscene and cutscene:FindFirstChild("Hurt") then
+                    cutscene.Hurt.ImageTransparency = 1
+                end
+                local impactCutscene = pg:FindFirstChild("Impact") and pg.Impact:FindFirstChild("Cutscene")
+                if impactCutscene and impactCutscene:FindFirstChild("Hurt") then
+                    impactCutscene.Hurt.ImageTransparency = 1
+                end
+            end
+        end
+    end)
+end))
+
+if Events and Events:FindFirstChild("Slam") then
+    table.insert(activeConnections, Events.Slam.OnClientEvent:Connect(function(slamEvent)
+        if isRunning and Config.AnchorBar and typeof(slamEvent) == "Instance" then
+            pcall(function() slamEvent:FireServer("Perfect") end)
+        end
+    end))
+end
+
+if Events and Events:FindFirstChild("Charge") then
+    table.insert(activeConnections, Events.Charge.OnClientEvent:Connect(function(chargeEvent)
+        if isRunning and Config.AnchorBar and typeof(chargeEvent) == "Instance" then
+            pcall(function() chargeEvent:FireServer(100) end)
+        end
+    end))
+end
+
+table.insert(activeConnections, UserInputService.JumpRequest:Connect(function()
+    if Config.InfiniteJump and isRunning then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end))
+
+pcall(function()
+    LocalPlayer.Idled:Connect(function()
+        if Config.AntiAFK and isRunning then
+            local vu = game:GetService("VirtualUser")
+            if vu then
+                vu:CaptureController()
+                vu:ClickButton2(Vector2.new(0, 0))
+            end
+        end
+    end)
+end)
+
+local espFolder = Instance.new("Folder")
+espFolder.Name = "IdenticalESP"
+espFolder.Parent = Workspace
+table.insert(cleanUpInstances, espFolder)
+
+local activeESP = {}
+
+local fishRingAnchor = Instance.new("Part")
+fishRingAnchor.Name = "FishRingAnchor"
+fishRingAnchor.Size = Vector3.new(0.5, 0.5, 0.5)
+fishRingAnchor.Transparency = 1
+fishRingAnchor.CanCollide = false
+fishRingAnchor.Anchored = true
+fishRingAnchor.Parent = Workspace
+table.insert(cleanUpInstances, fishRingAnchor)
+
+local fishRingAdornment = Instance.new("CylinderHandleAdornment")
+fishRingAdornment.Name = "FishRingAdornment"
+fishRingAdornment.Adornee = fishRingAnchor
+fishRingAdornment.AlwaysOnTop = true
+fishRingAdornment.ZIndex = 5
+fishRingAdornment.Radius = 6
+fishRingAdornment.InnerRadius = 5.2
+fishRingAdornment.Height = 0.2
+fishRingAdornment.Color3 = Color3.fromRGB(255, 45, 45)
+fishRingAdornment.Transparency = 0.2
+fishRingAdornment.CFrame = CFrame.Angles(math.rad(90), 0, 0)
+fishRingAdornment.Visible = false
+fishRingAdornment.Parent = fishRingAnchor
+
+local function AddESP(instance, name, espCategory, color, icon)
+    if not instance or activeESP[instance] then return end
+    local part = instance:IsA("BasePart") and instance or instance:FindFirstChildWhichIsA("BasePart")
+    if not part then return end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "ESP_" .. name
+    bb.Size = UDim2.new(0, 150, 0, 24)
+    bb.StudsOffset = Vector3.new(0, 2.5, 0)
+    bb.AlwaysOnTop = true
+    bb.Adornee = part
+    bb.Parent = espFolder
+
+    local f = Instance.new("Frame", bb)
+    f.Size = UDim2.new(1, 0, 1, 0)
+    f.BackgroundColor3 = Colors.Background
+    f.BackgroundTransparency = 0.2
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 4)
+    local s = Instance.new("UIStroke", f)
+    s.Color = color or Colors.CyanAccent
+    s.Thickness = 1
+
+    local lbl = Instance.new("TextLabel", f)
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.Text = (icon or "") .. " " .. name
+    lbl.TextColor3 = color or Colors.TextWhite
+    lbl.TextSize = 10
+
+    activeESP[instance] = {gui = bb, label = lbl, part = part, espCategory = espCategory, name = name, icon = icon or ""}
+end
+
+local function RemoveESP(instance)
+    local data = activeESP[instance]
+    if data then
+        if data.gui and data.gui.Parent then data.gui:Destroy() end
+        activeESP[instance] = nil
+    end
+end
+
+table.insert(activeConnections, RunService.RenderStepped:Connect(function()
+    if not isRunning then return end
+
+    if Config.Fullbright then
+        Lighting.Brightness = 2.5
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 1000000
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+        Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+    end
+    if Config.NoFog then
+        Lighting.FogEnd = 1000000
+        Lighting.FogStart = 1000000
+        local atmo = Lighting:FindFirstChildWhichIsA("Atmosphere")
+        if atmo and (atmo.Density > 0 or atmo.Haze > 0) then
+            atmo.Density = 0
+            atmo.Haze = 0
+            atmo.Glare = 0
+        end
+        for _, d in ipairs(Camera:GetDescendants()) do
+            if d:IsA("ParticleEmitter") and d.Enabled then
+                d.Enabled = false
+            end
+        end
+    end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                AddESP(p.Character, p.DisplayName, "Players", Colors.CyanAccent, "👤")
+            end
+        end
+    end
+
+    if Workspace:FindFirstChild("SecretRod") then
+        for _, r in ipairs(Workspace.SecretRod:GetChildren()) do
+            AddESP(r, r.Name, "SecretRod", Colors.AccentYellow, "🌟")
+        end
+    end
+
+    if Workspace:FindFirstChild("NPC") then
+        local sp = Workspace.NPC:FindFirstChild("Spirit") or Workspace.NPC:FindFirstChild("God")
+        if sp then
+            AddESP(sp, "Thần Linh", "GodSpirit", Colors.AccentGreen, "⛩️")
+        end
+    end
+
+    if Workspace:FindFirstChild("Boat") then
+        for _, b in ipairs(Workspace.Boat:GetChildren()) do
+            AddESP(b, b.Name, "Boats", Colors.AccentBlue, "⛵")
+        end
+    end
+
+    if Workspace:FindFirstChild("BossSetUp") then
+        for _, b in ipairs(Workspace.BossSetUp:GetChildren()) do
+            AddESP(b, b.Name, "Boss", Colors.AccentRed, "👹")
+        end
+    end
+
+    if Workspace:FindFirstChild("NPC") then
+        for _, n in ipairs(Workspace.NPC:GetChildren()) do
+            if n.Name:find("Taoist") or n.Name:find("Grand Angler") then
+                AddESP(n, n.Name, "Taoist", Colors.AccentOrange, "📜")
+            elseif n.Name:find("Maoshan") then
+                AddESP(n, n.Name, "Maoshan", Colors.CyanPrimary, "✨")
+            end
+        end
+    end
+
+    local camPos = Camera.CFrame.Position
+    for inst, data in pairs(activeESP) do
+        if not inst.Parent or not data.part.Parent then
+            RemoveESP(inst)
+        else
+            local isEnabled = Config["ESP_" .. data.espCategory]
+            data.gui.Enabled = isEnabled and true or false
+            if isEnabled then
+                local dist = math.floor((camPos - data.part.Position).Magnitude)
+                data.label.Text = data.icon .. " " .. data.name .. " [" .. dist .. "m]"
+            end
+        end
+    end
+
+    if Config.FishRedRing then
+        local fishPos = nil
+        local char = LocalPlayer.Character
+        local fishID = LocalPlayer:GetAttribute("FishID")
+        
+        if fishID and Workspace:FindFirstChild("Fishes") then
+            local f = Workspace.Fishes:FindFirstChild(fishID)
+            if f then
+                if f:FindFirstChild("Model") and f.Model:IsA("Model") then
+                    fishPos = f.Model:GetPivot().Position
+                elseif f:FindFirstChild("Buoy") and f.Buoy:IsA("BasePart") then
+                    fishPos = f.Buoy.Position
+                end
+            end
+        end
+        
+        if not fishPos and Workspace:FindFirstChild("Fishes") then
+            local uid = tostring(LocalPlayer.UserId)
+            for _, f in ipairs(Workspace.Fishes:GetChildren()) do
+                if f:FindFirstChild(uid .. "_PlayerHealth") then
+                    if f:FindFirstChild("Model") and f.Model:IsA("Model") then
+                        fishPos = f.Model:GetPivot().Position
+                    elseif f:FindFirstChild("Buoy") and f.Buoy:IsA("BasePart") then
+                        fishPos = f.Buoy.Position
+                    end
+                    break
+                end
+            end
+        end
+
+        if not fishPos and char then
+            local buoy = char:FindFirstChild("Buoy")
+            if buoy and buoy:IsA("BasePart") then
+                fishPos = buoy.Position
+            else
+                for _, d in ipairs(char:GetDescendants()) do
+                    if d:IsA("Beam") and d.Attachment1 and d.Attachment0 then
+                        local p0 = d.Attachment0.Parent
+                        local p1 = d.Attachment1.Parent
+                        if (p1 and p1.Name == "Buoy") or (p0 and p0.Name == "Buoy") then
+                            local buoyAtt = (p1 and p1.Name == "Buoy") and d.Attachment1 or d.Attachment0
+                            fishPos = buoyAtt.WorldPosition
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local isHooked = char and (char:GetAttribute("Fishing") == true or char:GetAttribute("Minigame") == true)
+        local fUI = pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Fishing")
+        if (isHooked or (fUI and fUI.Visible)) and fishPos then
+            fishRingAnchor.Position = fishPos
+            fishRingAdornment.Visible = true
+        else
+            fishRingAdornment.Visible = false
+        end
+    else
+        if fishRingAdornment.Visible then fishRingAdornment.Visible = false end
+    end
+end))
+
+table.insert(activeConnections, UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Config.UIKeybind then
+        if ToggleUiVisibility then ToggleUiVisibility() end
+    elseif input.KeyCode == Enum.KeyCode.End or input.KeyCode == Config.StopKeybind then
+        UnloadScript()
+    end
+end))
+
+ShowNotification("HoangWER FISHING V2.0", "Script đã sẵn sàng! Nhấn R-CTRL để mở menu.", "SUCCESS", 5)
